@@ -1,6 +1,8 @@
 using System;
 using System.IO;
-
+using Dalamud.Events;
+using Dalamud.Game.Text;
+using Dalamud.Game.Text.SeStringHandling;
 using Dalamud.Interface.Windowing;
 using Dalamud.Logging;
 using Dalamud.Plugin;
@@ -70,6 +72,19 @@ namespace Dalamud.CorePlugin
             {
                 this.localizationManager.SetupWithUiCulture();
             }
+        }
+
+        [Event.Chat.Message]
+        private void OnChatMessage(
+            XivChatType type, uint senderId, SeString sender, SeString message, ref bool isHandled)
+        {
+            PluginLog.Information($"Message: {message.TextValue}");
+        }
+
+        [Event.Framework.Update]
+        public static void OnUpdate()
+        {
+            //PluginLog.Verbose("FRAMEWORK UPDATE!!!!!!!");
         }
 
         private void OnDraw()

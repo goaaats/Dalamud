@@ -6,6 +6,7 @@ using System.Threading;
 
 using Dalamud.Configuration.Internal;
 using Dalamud.Data;
+using Dalamud.Events;
 using Dalamud.Game;
 using Dalamud.Game.ClientState;
 using Dalamud.Game.Command;
@@ -65,6 +66,8 @@ namespace Dalamud
 
             this.finishUnloadSignal = finishSignal;
             this.finishUnloadSignal.Reset();
+
+            EventSystem.Init();
         }
 
 #if DEBUG

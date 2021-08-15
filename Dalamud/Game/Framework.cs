@@ -3,13 +3,14 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Runtime.InteropServices;
-using System.Threading;
 
+using Dalamud.Events;
 using Dalamud.Game.Gui;
 using Dalamud.Game.Libc;
 using Dalamud.Game.Network;
 using Dalamud.Hooking;
 using Serilog;
+using Thread = System.Threading.Thread;
 
 namespace Dalamud.Game
 {
@@ -243,6 +244,7 @@ namespace Dalamud.Game
                 }
             }
 
+            Event.Run("framework.update");
             return this.updateHook.Original(framework);
         }
 

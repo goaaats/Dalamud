@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Runtime.InteropServices;
 
+using Dalamud.Events;
 using Dalamud.Game.Libc;
 using Dalamud.Game.Text;
 using Dalamud.Game.Text.SeStringHandling;
@@ -370,6 +371,7 @@ namespace Dalamud.Game.Gui
                 if (!isHandled)
                 {
                     this.ChatMessage?.Invoke(chattype, senderid, ref parsedSender, ref parsedMessage, ref isHandled);
+                    Event.Run("chat.message", chattype, senderid, parsedSender, parsedMessage, isHandled);
                 }
 
                 var newEdited = parsedMessage.Encode();

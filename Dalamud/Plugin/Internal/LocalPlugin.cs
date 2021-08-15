@@ -2,7 +2,7 @@ using System;
 using System.IO;
 using System.Linq;
 using System.Reflection;
-
+using Dalamud.Events;
 using Dalamud.Game;
 using Dalamud.Logging.Internal;
 using Dalamud.Plugin.Internal.Exceptions;
@@ -296,6 +296,9 @@ namespace Dalamud.Plugin.Internal
 
                 this.instance.Initialize(this.DalamudInterface);
 
+                EventSystem.Instance.RegisterAssembly(this.pluginAssembly);
+                EventSystem.Instance.RegisterObject(this.instance);
+
                 this.State = PluginState.Loaded;
                 Log.Information($"Finished loading {this.DllFile.Name}");
             }
@@ -330,6 +333,8 @@ namespace Dalamud.Plugin.Internal
             {
                 this.State = PluginState.InProgress;
                 Log.Information($"Unloading {this.DllFile.Name}");
+
+                EventSystem.Instance.UnregisterAssembly(this.pluginAssembly);
 
                 this.instance?.Dispose();
                 this.instance = null;
