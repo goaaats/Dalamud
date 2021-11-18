@@ -11,7 +11,10 @@ jobs:
         uses: actions/checkout@v2
         with:
           submodules: recursive
-      - uses: actions/setup-dotnet@v1
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v1.1
+        env: 
+          MSBuildEnableWorkloadResolver: true
       - name: Define VERSION
         run: |
           $env:COMMIT = $env:GITHUB_SHA.Substring(0, 7)
