@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Diagnostics;
 using System.Numerics;
 
@@ -41,7 +41,7 @@ namespace Dalamud.Interface.Animation
         /// <summary>
         /// Gets or sets a value indicating whether the result of the easing should be inversed.
         /// </summary>
-        public bool IsInverse { get; set; }
+        public bool Inverse { get; set; }
 
         /// <summary>
         /// Gets or sets the current value of the animation, from 0 to 1.
@@ -50,7 +50,7 @@ namespace Dalamud.Interface.Animation
         {
             get
             {
-                if (this.IsInverse)
+                if (this.Inverse)
                     return 1 - this.valueInternal;
 
                 return this.valueInternal;

@@ -51,6 +51,7 @@ namespace Dalamud.Interface.Internal
         private readonly SettingsWindow settingsWindow;
         private readonly SelfTestWindow selfTestWindow;
         private readonly StyleEditorWindow styleEditorWindow;
+        private readonly LogoWindow logoWindow;
 
         private readonly TextureWrap logoTexture;
 
@@ -87,6 +88,7 @@ namespace Dalamud.Interface.Internal
             this.settingsWindow = new SettingsWindow() { IsOpen = false };
             this.selfTestWindow = new SelfTestWindow() { IsOpen = false };
             this.styleEditorWindow = new StyleEditorWindow() { IsOpen = false };
+            this.logoWindow = new LogoWindow() { IsOpen = false };
 
             this.WindowSystem.AddWindow(this.changelogWindow);
             this.WindowSystem.AddWindow(this.colorDemoWindow);
@@ -101,6 +103,7 @@ namespace Dalamud.Interface.Internal
             this.WindowSystem.AddWindow(this.settingsWindow);
             this.WindowSystem.AddWindow(this.selfTestWindow);
             this.WindowSystem.AddWindow(this.styleEditorWindow);
+            this.WindowSystem.AddWindow(this.logoWindow);
 
             ImGuiManagedAsserts.AssertsEnabled = configuration.AssertsEnabledAtStartup;
 
@@ -220,6 +223,11 @@ namespace Dalamud.Interface.Internal
         /// Opens the <see cref="StyleEditorWindow"/>.
         /// </summary>
         public void OpenStyleEditor() => this.styleEditorWindow.IsOpen = true;
+
+        /// <summary>
+        /// Opens the <see cref="LogoWindow"/>.
+        /// </summary>
+        public void OpenLogoWindow() => this.logoWindow.IsOpen = true;
 
         #endregion
 
@@ -457,6 +465,11 @@ namespace Dalamud.Interface.Internal
                         if (ImGui.MenuItem("Open Credits window"))
                         {
                             this.OpenCreditsWindow();
+                        }
+
+                        if (ImGui.MenuItem("Open Logo window"))
+                        {
+                            OpenLogoWindow();
                         }
 
                         if (ImGui.MenuItem("Open Settings window"))
