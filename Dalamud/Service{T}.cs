@@ -1,6 +1,6 @@
 using System;
 using System.Reflection;
-
+using System.Threading.Tasks;
 using Dalamud.IoC;
 using Dalamud.IoC.Internal;
 using Dalamud.Logging.Internal;
@@ -19,6 +19,14 @@ namespace Dalamud
         private static readonly ModuleLog Log = new("SVC");
 
         private static T? instance;
+
+        // ReSharper disable once StaticMemberInGenericType
+        private static Task? setTask;
+
+        /// <summary>
+        /// Event invoked when the service is set.
+        /// </summary>
+        public static event Action AsyncSet;
 
         static Service()
         {
@@ -53,6 +61,43 @@ namespace Dalamud
         }
 
         /// <summary>
+        /// Asynchronously sets the type in the service locator via the provided arguments.
+        /// </summary>
+        /// <param name="args">Args to call the ctor with.</param>
+        /// <exception cref="InvalidOperationException">Thrown when the service is already being set.</exception>
+        public static void SetAsync(params object[] args)
+        {
+            if (setTask != null)
+            {
+                throw new InvalidOperationException("Service is already being set");
+            }
+
+            setTask = Task.Run(() =>
+            {
+                Set(args);
+                AsyncSet?.Invoke();
+            });
+        }
+
+        /// <summary>
+        /// Asynchronously sets the type in the service locator via the default parameterless constructor.
+        /// </summary>
+        /// <exception cref="InvalidOperationException">Thrown when the service is already being set.</exception>
+        public static void SetAsync()
+        {
+            if (setTask != null)
+            {
+                throw new InvalidOperationException("Service is already being set");
+            }
+
+            setTask = Task.Run(() =>
+            {
+                Set();
+                AsyncSet?.Invoke();
+            });
+        }
+
+        /// <summary>
         /// Sets a type in the service locator via a constructor with the given parameter types.
         /// </summary>
         /// <param name="args">Constructor arguments.</param>
@@ -79,6 +124,11 @@ namespace Dalamud
         /// <exception cref="InvalidOperationException">Thrown when the object instance is not present in the service locator.</exception>
         public static T Get()
         {
+            if (setTask != null && !setTask.IsCompleted)
+            {
+                throw new InvalidOperationException("Service locator is still setting the object asynchronously");
+            }
+
             return instance ?? throw new InvalidOperationException($"{typeof(T).FullName} has not been registered in the service locator!");
         }
 
@@ -88,7 +138,20 @@ namespace Dalamud
         /// <returns>The object if registered, null otherwise.</returns>
         public static T? GetNullable()
         {
+            if (setTask != null && !setTask.IsCompleted)
+            {
+                throw new InvalidOperationException("Service locator is still setting the object asynchronously");
+            }
+
             return instance;
+        }
+
+        public static void WaitForSet()
+        {
+            if (setTask == null)
+                throw new InvalidOperationException("Not set asynchronously");
+
+            setTask.Wait();
         }
 
         private static void SetInstanceObject(T instance)

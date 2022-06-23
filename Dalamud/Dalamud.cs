@@ -78,6 +78,9 @@ namespace Dalamud
             this.finishUnloadSignal.Reset();
 
             this.mainThreadContinueEvent = mainThreadContinueEvent;
+
+            Service<DataManager>.SetAsync(this.AssetDirectory);
+            Service<DataManager>.AsyncSet += Service<GameFontManager>.SetAsync;
         }
 
         /// <summary>
@@ -109,8 +112,7 @@ namespace Dalamud
                 if (!cacheDir.Exists)
                     cacheDir.Create();
 
-                Service<SigScanner>.Set(
-                    new SigScanner(true, new FileInfo(Path.Combine(cacheDir.FullName, $"{info.GameVersion}.json"))));
+                Service<SigScanner>.Set(true, new FileInfo(Path.Combine(cacheDir.FullName, $"{info.GameVersion}.json")));
                 Service<HookManager>.Set();
 
                 // Initialize FFXIVClientStructs function resolver
@@ -185,20 +187,7 @@ namespace Dalamud
                 Service<NetworkHandlers>.Set();
                 Log.Information("[T2] NH OK!");
 
-                using (Timings.Start("DM Init"))
-                {
-                    try
-                    {
-                        Service<DataManager>.Set().Initialize(this.AssetDirectory.FullName);
-                    }
-                    catch (Exception e)
-                    {
-                        Log.Error(e, "Could not initialize DataManager");
-                        this.Unload();
-                        return false;
-                    }
-                }
-
+                Service<DataManager>.WaitForSet();
                 Log.Information("[T2] Data OK!");
 
                 using (Timings.Start("CS Init"))
@@ -207,7 +196,7 @@ namespace Dalamud
                     Log.Information("[T2] CS OK!");
                 }
 
-                var localization = Service<Localization>.Set(new Localization(Path.Combine(this.AssetDirectory.FullName, "UIRes", "loc", "dalamud"), "dalamud_"));
+                var localization = Service<Localization>.Set(Path.Combine(this.AssetDirectory.FullName, "UIRes", "loc", "dalamud"), "dalamud_");
                 if (!string.IsNullOrEmpty(configuration.LanguageOverride))
                 {
                     localization.SetupWithLangCode(configuration.LanguageOverride);
@@ -232,9 +221,9 @@ namespace Dalamud
                     Log.Information("[T2] IM OK!");
                 }
 
-                using (Timings.Start("GFM Init"))
+                using (Timings.Start("GFM Wait"))
                 {
-                    Service<GameFontManager>.Set();
+                    Service<GameFontManager>.WaitForSet();
                     Log.Information("[T2] GFM OK!");
                 }
 

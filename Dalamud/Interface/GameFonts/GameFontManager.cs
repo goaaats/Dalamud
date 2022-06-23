@@ -31,8 +31,6 @@ namespace Dalamud.Interface.GameFonts
 
         private readonly object syncRoot = new();
 
-        private readonly InterfaceManager interfaceManager;
-
         private readonly FdtReader?[] fdts;
         private readonly List<byte[]> texturePixels;
         private readonly Dictionary<GameFontStyle, ImFontPtr> fonts = new();
@@ -74,8 +72,6 @@ namespace Dalamud.Interface.GameFonts
                         }
                     }).ToList();
             }
-
-            this.interfaceManager = Service<InterfaceManager>.Get();
         }
 
         /// <summary>
@@ -201,7 +197,7 @@ namespace Dalamud.Interface.GameFonts
                 else
                 {
                     Log.Information("[GameFontManager] NewFontRef: Calling RebuildFonts because {0} has been requested.", style.ToString());
-                    this.interfaceManager.RebuildFonts();
+                    Service<InterfaceManager>.Get().RebuildFonts();
                 }
             }
 
@@ -297,7 +293,7 @@ namespace Dalamud.Interface.GameFonts
             var ioFonts = ImGui.GetIO().Fonts;
             ioFonts.GetTexDataAsRGBA32(out byte* pixels8, out var width, out var height);
             var pixels32 = (uint*)pixels8;
-            var fontGamma = this.interfaceManager.FontGamma;
+            var fontGamma = Service<InterfaceManager>.Get().FontGamma;
 
             foreach (var (style, font) in this.fonts)
             {

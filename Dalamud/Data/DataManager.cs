@@ -36,12 +36,14 @@ namespace Dalamud.Data
         /// <summary>
         /// Initializes a new instance of the <see cref="DataManager"/> class.
         /// </summary>
-        internal DataManager()
+        internal DataManager(DirectoryInfo assetDirectory)
         {
             this.Language = Service<DalamudStartInfo>.Get().Language;
 
             // Set up default values so plugins do not null-reference when data is being loaded.
             this.ClientOpCodes = this.ServerOpCodes = new ReadOnlyDictionary<string, ushort>(new Dictionary<string, ushort>());
+
+            this.Initialize(assetDirectory.FullName);
         }
 
         /// <summary>
@@ -280,21 +282,21 @@ namespace Dalamud.Data
         /// <summary>
         /// Initialize this data manager.
         /// </summary>
-        /// <param name="baseDir">The directory to load data from.</param>
-        internal void Initialize(string baseDir)
+        /// <param name="assetDir">The directory to load data from.</param>
+        private void Initialize(string assetDir)
         {
             try
             {
                 Log.Verbose("Starting data load...");
 
                 var zoneOpCodeDict = JsonConvert.DeserializeObject<Dictionary<string, ushort>>(
-                    File.ReadAllText(Path.Combine(baseDir, "UIRes", "serveropcode.json")));
+                    File.ReadAllText(Path.Combine(assetDir, "UIRes", "serveropcode.json")));
                 this.ServerOpCodes = new ReadOnlyDictionary<string, ushort>(zoneOpCodeDict);
 
                 Log.Verbose("Loaded {0} ServerOpCodes.", zoneOpCodeDict.Count);
 
                 var clientOpCodeDict = JsonConvert.DeserializeObject<Dictionary<string, ushort>>(
-                    File.ReadAllText(Path.Combine(baseDir, "UIRes", "clientopcode.json")));
+                    File.ReadAllText(Path.Combine(assetDir, "UIRes", "clientopcode.json")));
                 this.ClientOpCodes = new ReadOnlyDictionary<string, ushort>(clientOpCodeDict);
 
                 Log.Verbose("Loaded {0} ClientOpCodes.", clientOpCodeDict.Count);
