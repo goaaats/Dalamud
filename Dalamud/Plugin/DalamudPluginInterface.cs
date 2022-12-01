@@ -6,7 +6,6 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Reflection;
-
 using Dalamud.Configuration;
 using Dalamud.Configuration.Internal;
 using Dalamud.Data;
@@ -17,12 +16,14 @@ using Dalamud.Game.Text.SeStringHandling;
 using Dalamud.Game.Text.SeStringHandling.Payloads;
 using Dalamud.Interface;
 using Dalamud.Interface.Internal;
+using Dalamud.Interface.Keybind;
 using Dalamud.Plugin.Internal;
 using Dalamud.Plugin.Internal.Types;
 using Dalamud.Plugin.Ipc;
 using Dalamud.Plugin.Ipc.Exceptions;
 using Dalamud.Plugin.Ipc.Internal;
 using Dalamud.Utility;
+using ImGuiNET;
 
 namespace Dalamud.Plugin;
 
@@ -43,7 +44,8 @@ public sealed class DalamudPluginInterface : IDisposable
     /// <param name="reason">The reason the plugin was loaded.</param>
     /// <param name="isDev">A value indicating whether this is a dev plugin.</param>
     /// <param name="sourceRepository">The repository from which the plugin is installed.</param>
-    internal DalamudPluginInterface(string pluginName, FileInfo assemblyLocation, PluginLoadReason reason, bool isDev, string sourceRepository)
+    internal DalamudPluginInterface(
+        string pluginName, FileInfo assemblyLocation, PluginLoadReason reason, bool isDev, string sourceRepository)
     {
         var configuration = Service<DalamudConfiguration>.Get();
         var dataManager = Service<DataManager>.Get();
@@ -149,7 +151,8 @@ public sealed class DalamudPluginInterface : IDisposable
     /// <summary>
     /// Gets a value indicating whether Dalamud is running in Debug mode or the /xldev menu is open. This can occur on release builds.
     /// </summary>
-    public bool IsDevMenuOpen => Service<DalamudInterface>.GetNullable() is { IsDevMenuOpen: true }; // Can be null during boot
+    public bool IsDevMenuOpen =>
+        Service<DalamudInterface>.GetNullable() is { IsDevMenuOpen: true }; // Can be null during boot
 
     /// <summary>
     /// Gets a value indicating whether a debugger is attached.
@@ -174,12 +177,14 @@ public sealed class DalamudPluginInterface : IDisposable
     /// <summary>
     /// Gets a list of installed plugin names.
     /// </summary>
-    public List<string> PluginNames => Service<PluginManager>.Get().InstalledPlugins.Select(p => p.Manifest.Name).ToList();
+    public List<string> PluginNames =>
+        Service<PluginManager>.Get().InstalledPlugins.Select(p => p.Manifest.Name).ToList();
 
     /// <summary>
     /// Gets a list of installed plugin internal names.
     /// </summary>
-    public List<string> PluginInternalNames => Service<PluginManager>.Get().InstalledPlugins.Select(p => p.Manifest.InternalName).ToList();
+    public List<string> PluginInternalNames =>
+        Service<PluginManager>.Get().InstalledPlugins.Select(p => p.Manifest.InternalName).ToList();
 
     #region IPC
 
@@ -234,11 +239,13 @@ public sealed class DalamudPluginInterface : IDisposable
         => new CallGatePubSub<T1, T2, T3, T4, T5, T6, TRet>(name);
 
     /// <inheritdoc cref="ICallGateProvider{TRet}"/>
-    public ICallGateProvider<T1, T2, T3, T4, T5, T6, T7, TRet> GetIpcProvider<T1, T2, T3, T4, T5, T6, T7, TRet>(string name)
+    public ICallGateProvider<T1, T2, T3, T4, T5, T6, T7, TRet> GetIpcProvider<T1, T2, T3, T4, T5, T6, T7, TRet>(
+        string name)
         => new CallGatePubSub<T1, T2, T3, T4, T5, T6, T7, TRet>(name);
 
     /// <inheritdoc cref="ICallGateProvider{TRet}"/>
-    public ICallGateProvider<T1, T2, T3, T4, T5, T6, T7, T8, TRet> GetIpcProvider<T1, T2, T3, T4, T5, T6, T7, T8, TRet>(string name)
+    public ICallGateProvider<T1, T2, T3, T4, T5, T6, T7, T8, TRet> GetIpcProvider<T1, T2, T3, T4, T5, T6, T7, T8, TRet>(
+        string name)
         => new CallGatePubSub<T1, T2, T3, T4, T5, T6, T7, T8, TRet>(name);
 
     /// <summary>
@@ -275,11 +282,13 @@ public sealed class DalamudPluginInterface : IDisposable
         => new CallGatePubSub<T1, T2, T3, T4, T5, T6, TRet>(name);
 
     /// <inheritdoc cref="ICallGateSubscriber{TRet}"/>
-    public ICallGateSubscriber<T1, T2, T3, T4, T5, T6, T7, TRet> GetIpcSubscriber<T1, T2, T3, T4, T5, T6, T7, TRet>(string name)
+    public ICallGateSubscriber<T1, T2, T3, T4, T5, T6, T7, TRet> GetIpcSubscriber<T1, T2, T3, T4, T5, T6, T7, TRet>(
+        string name)
         => new CallGatePubSub<T1, T2, T3, T4, T5, T6, T7, TRet>(name);
 
     /// <inheritdoc cref="ICallGateSubscriber{TRet}"/>
-    public ICallGateSubscriber<T1, T2, T3, T4, T5, T6, T7, T8, TRet> GetIpcSubscriber<T1, T2, T3, T4, T5, T6, T7, T8, TRet>(string name)
+    public ICallGateSubscriber<T1, T2, T3, T4, T5, T6, T7, T8, TRet> GetIpcSubscriber<
+        T1, T2, T3, T4, T5, T6, T7, T8, TRet>(string name)
         => new CallGatePubSub<T1, T2, T3, T4, T5, T6, T7, T8, TRet>(name);
 
     #endregion
@@ -368,6 +377,7 @@ public sealed class DalamudPluginInterface : IDisposable
     {
         Service<ChatGui>.Get().RemoveChatLinkHandler(this.pluginName);
     }
+
     #endregion
 
     #region Dependency Injection
@@ -408,12 +418,101 @@ public sealed class DalamudPluginInterface : IDisposable
 
     #endregion
 
+    #region Keybinds
+
+    /// <summary>
+    /// Open the Dalamud keybind manager, focused on your plugin's section.
+    /// </summary>
+    public void ShowKeybindManager()
+    {
+        // todo
+    }
+
+    /// <summary>
+    /// Register a keybind.
+    /// </summary>
+    /// <param name="id">The ID of the bind used for saving.</param>
+    /// <param name="flags">Flags to apply to the keybind selection.</param>
+    /// <param name="localizedNameFunc">Function resolving the localized name of the bind.</param>
+    /// <param name="localizedDescFunc">Function resolving the localized description of the bind.</param>
+    /// <returns>GUID uniquely identifying this keybind, used to look it up at runtime. This will change each time you register the bind.</returns>
+    public Guid RegisterBind(
+        string id,
+        KeybindFlags flags = KeybindFlags.AllowModifiers | KeybindFlags.AllowGameBind | KeybindFlags.AllowPluginBind,
+        Func<string>? localizedNameFunc = null,
+        Func<string>? localizedDescFunc = null)
+    {
+        return Service<KeybindManager>.Get().RegisterBind(
+            this.pluginName,
+            id,
+            flags,
+            localizedNameFunc,
+            localizedDescFunc);
+    }
+
+    /// <summary>
+    /// Unregister a bind.
+    /// </summary>
+    /// <param name="guid">The GUID of the bind used for saving.</param>
+    public void UnregisterBind(Guid guid)
+    {
+        Service<KeybindManager>.Get().UnregisterBind(guid);
+    }
+
+    /// <summary>
+    /// Get the configuration assigned to this bind.
+    /// Null if unassigned.
+    /// </summary>
+    /// <param name="guid">The ID of the bind.</param>
+    /// <returns>The config of the bind, or null.</returns>
+    public Keybind? GetConfigForBind(Guid guid)
+    {
+        return Service<KeybindManager>.Get().GetConfigForBind(guid);
+    }
+
+    /// <summary>
+    /// Check if a keybind with the specified guid is down.
+    /// </summary>
+    /// <param name="guid">The ID of the bind.</param>
+    /// <param name="preventPassthrough">Don't pass this press through to the game.</param>
+    /// <returns>Whether or not the key is down.</returns>
+    public bool KeybindIsDown(Guid guid, bool preventPassthrough = true)
+    {
+        return false;
+    }
+
+    /// <summary>
+    /// Check if a keybind with the specified guid is pressed. Fires once per press.
+    /// </summary>
+    /// <param name="guid">The ID of the bind.</param>
+    /// <param name="preventPassthrough">Don't pass this press through to the game.</param>
+    /// <returns>Whether or not the key is pressed.</returns>
+    public bool KeybindIsPressed(Guid guid, bool preventPassthrough = true)
+    {
+        return false;
+    }
+
+    /// <summary>
+    /// Check if a keybind with the specified guid is released. Fires once per press.
+    /// </summary>
+    /// <param name="guid">The ID of the bind.</param>
+    /// <param name="preventPassthrough">Don't pass this press through to the game.</param>
+    /// <returns>Whether or not the key is released.</returns>
+    public bool KeybindIsReleased(Guid guid, bool preventPassthrough = true)
+    {
+        return false;
+    }
+
+    #endregion
+
     /// <summary>
     /// Unregister your plugin and dispose all references.
     /// </summary>
     void IDisposable.Dispose()
     {
         this.UiBuilder.ExplicitDispose();
+
+        Service<KeybindManager>.Get().UnregisterAllFor(this.pluginName);
         Service<ChatGui>.Get().RemoveChatLinkHandler(this.pluginName);
         Service<Localization>.Get().LocalizationChanged -= this.OnLocalizationChanged;
         Service<DalamudConfiguration>.Get().DalamudConfigurationSaved -= this.OnDalamudConfigurationSaved;

@@ -53,6 +53,12 @@ internal class LocalPlugin : IDisposable
             throw new InvalidPluginException(dllFile);
         }
 
+        if (!dllFile.Exists)
+        {
+            Log.Error("DLL file at {FilePath} does not exist", dllFile.FullName);
+            throw new InvalidPluginException(dllFile);
+        }
+
         this.DllFile = dllFile;
         this.State = PluginState.Unloaded;
 

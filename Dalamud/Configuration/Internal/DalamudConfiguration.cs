@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 
 using Dalamud.Game.Text;
+using Dalamud.Interface.Keybind;
 using Dalamud.Interface.Style;
 using Dalamud.Utility;
 using Newtonsoft.Json;
@@ -345,6 +346,11 @@ internal sealed class DalamudConfiguration : IServiceType
     /// Gets or sets a list of plugins that testing builds should be downloaded for.
     /// </summary>
     public List<PluginTestingOptIn>? PluginTestingOptIns { get; set; }
+
+    /// <summary>
+    /// Gets or sets a list of configured keybinds.
+    /// </summary>
+    public Dictionary<string, Keybind>? Keybinds { get; set; }
 
     /// <summary>
     /// Load a configuration from the provided path.
