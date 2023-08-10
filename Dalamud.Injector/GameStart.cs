@@ -19,21 +19,17 @@ namespace Dalamud.Injector
         /// <summary>
         /// Start a process without ACL protections.
         /// </summary>
-        /// <param name="workingDir">The working directory.</param>
-        /// <param name="exePath">The path to the executable file.</param>
-        /// <param name="arguments">Arguments to pass to the executable file.</param>
-        /// <param name="dontFixAcl">Don't actually fix the ACL.</param>
+        /// <param name="context">Configuration options for the game start.</param>
         /// <param name="beforeResume">Action to execute before the process is started.</param>
-        /// <param name="waitForGameWindow">Wait for the game window to be ready before proceeding.</param>
         /// <returns>The started process.</returns>
         /// <exception cref="Win32Exception">Thrown when a win32 error occurs.</exception>
         /// <exception cref="GameStartException">Thrown when the process did not start correctly.</exception>
-        public static Process LaunchGame(string workingDir, string exePath, string arguments, bool dontFixAcl, Action<Process> beforeResume, bool waitForGameWindow = true)
+        public static Process LaunchGame(GameStartContext context, Action<Process> beforeResume)
         {
             Process process = null;
 
             var psecDesc = IntPtr.Zero;
-            if (!dontFixAcl)
+            if (!context.DontFixAcl)
             {
                 var userName = Environment.UserName;
 
@@ -93,14 +89,14 @@ namespace Dalamud.Injector
                 try
                 {
                     if (!PInvoke.CreateProcess(
-                            null,
-                            $"\"{exePath}\" {arguments}",
+                            null!,
+                            $"\"{context.ExePath}\" {context.Arguments}",
                             ref lpProcessAttributes,
                             IntPtr.Zero,
                             false,
                             PInvoke.CREATE_SUSPENDED,
                             IntPtr.Zero,
-                            workingDir,
+                            context.WorkingDir,
                             ref lpStartupInfo,
                             out lpProcessInformation))
                     {
@@ -112,7 +108,7 @@ namespace Dalamud.Injector
                     Environment.SetEnvironmentVariable("__COMPAT_LAYER", compatLayerPrev);
                 }
 
-                if (!dontFixAcl)
+                if (!context.DontFixAcl)
                     DisableSeDebug(lpProcessInformation.hProcess);
 
                 process = new ExistingProcess(lpProcessInformation.hProcess);
@@ -122,7 +118,7 @@ namespace Dalamud.Injector
                 PInvoke.ResumeThread(lpProcessInformation.hThread);
 
                 // Ensure that the game main window is prepared
-                if (waitForGameWindow)
+                if (context.WaitForGameWindow)
                 {
                     try
                     {
@@ -150,7 +146,7 @@ namespace Dalamud.Injector
                     }
                 }
 
-                if (!dontFixAcl)
+                if (!context.DontFixAcl)
                     CopyAclFromSelfToTargetProcess(lpProcessInformation.hProcess);
             }
             catch (Exception ex)

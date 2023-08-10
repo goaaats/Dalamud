@@ -10,6 +10,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 
 using Dalamud.Game;
+using Dalamud.Injector.Isolation;
 using Newtonsoft.Json;
 using Reloaded.Memory.Buffers;
 using Serilog;
@@ -786,11 +787,18 @@ namespace Dalamud.Injector
                 gameArgumentString = string.Join(" ", gameArguments.Select(x => EncodeParameterArgument(x)));
             }
 
+            var startContext = new GameStartContext
+            {
+                WorkingDir = Path.GetDirectoryName(gamePath),
+                ExePath = gamePath,
+                Arguments = gameArgumentString,
+                DontFixAcl = noFixAcl,
+                WaitForGameWindow = waitForGameWindow,
+                DalamudBinaryDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location),
+            };
+
             var process = GameStart.LaunchGame(
-                Path.GetDirectoryName(gamePath),
-                gamePath,
-                gameArgumentString,
-                noFixAcl,
+                startContext,
                 p =>
                 {
                     if (!withoutDalamud && mode == "entrypoint")
@@ -942,6 +950,11 @@ namespace Dalamud.Injector
             }
 
             Log.Information("Done");
+        }
+
+        private static void AddDefaultAppContainerPaths(IsolationConfig config)
+        {
+            
         }
 
         [DllImport("Dalamud.Boot.dll")]

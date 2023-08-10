@@ -50,6 +50,7 @@ public record DalamudStartInfo : IServiceType
         this.BootEnabledGameFixes = other.BootEnabledGameFixes;
         this.BootUnhookDlls = other.BootUnhookDlls;
         this.CrashHandlerShow = other.CrashHandlerShow;
+        this.UseAppContainer = other.UseAppContainer;
     }
 
     /// <summary>
@@ -172,4 +173,9 @@ public record DalamudStartInfo : IServiceType
     /// Gets or sets a value indicating whether to show crash handler console window.
     /// </summary>
     public bool CrashHandlerShow { get; set; }
+    
+    /// <summary>
+    /// Gets or sets a value indicating whether the current process is sandboxed.
+    /// </summary>
+    public bool UseAppContainer { get; set; }
 }
