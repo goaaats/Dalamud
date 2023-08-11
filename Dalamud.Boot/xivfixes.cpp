@@ -422,6 +422,23 @@ void xivfixes::backup_userdata_save(bool bApply) {
     static std::mutex s_mtx;
 
     if (bApply) {
+        /*
+        DWORD oldProt = 0;
+
+        auto inst = utils::signature_finder()
+            .look_in(utils::loaded_module(g_hGameInstance), ".text")
+            .look_for_hex("75 ?? 83 c8 ff 4c 8b ?? ?? ?? ?? ?? 00 4c 8b ?? 24 ?? ?? ?? 00 4c 8b ?? 24 ?? ?? ?? 00 48 8B ?? ?? ?? ?? 00 48 ?? ?? e8")
+            .find_one()
+            .Match;
+
+        // yes this is a kludge until we make a proper solution for it
+        auto veryBad = const_cast<char*>(inst.data());
+        VirtualProtect(veryBad, 1, PAGE_EXECUTE_READWRITE, &oldProt);
+        veryBad[0] = 0xEB;
+        VirtualProtect(veryBad, 1, oldProt, &oldProt);
+        FlushInstructionCache(GetCurrentProcess(), veryBad, 1);
+        */
+        
         if (!g_startInfo.BootEnabledGameFixes.contains("backup_userdata_save")) {
             logging::I("{} Turned off via environment variable.", LogTag);
             return;

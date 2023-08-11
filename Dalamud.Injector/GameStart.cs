@@ -2,9 +2,10 @@ using System;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
+using System.IO;
 using System.Runtime.InteropServices;
 using System.Threading;
-
+using Dalamud.Injector.Isolation;
 using Serilog;
 
 // ReSharper disable InconsistentNaming
@@ -27,6 +28,9 @@ namespace Dalamud.Injector
         public static Process LaunchGame(GameStartContext context, Action<Process> beforeResume)
         {
             Process process = null;
+
+            // We need some defaults in our isolation config, if we have one
+            AddDefaultAppContainerPaths(context);
 
             var psecDesc = IntPtr.Zero;
             if (!context.DontFixAcl)
@@ -301,6 +305,59 @@ namespace Dalamud.Injector
             }
 
             PInvoke.CloseHandle(tokenHandle);
+        }
+
+        private static void AddDefaultAppContainerPaths(GameStartContext context)
+        {
+            var config = context.Isolation;
+            if (config == null)
+                return;
+
+            var gameConfigDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "My Games", "FINAL FANTASY XIV - A Realm Reborn");
+            var gameConfigDownloadDirectory = Path.Combine(gameConfigDirectory, "downloads");
+            var xlDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "XIVLauncher");
+            var xlAddonDirectory = Path.Combine(xlDirectory, "addon");
+            var xlRuntimeDirectory = Path.Combine(xlDirectory, "runtime");
+            var xlPatchesDirectory = Path.Combine(xlDirectory, "patches");
+
+            // Current policy is:
+            // (Has Low IL)
+            // 1. [grant, r-x] $base_game
+            // 2. [grant, rw-] $game_config
+            // 3. [deny,  -w-] $game_config/downloads (otherwise may overwrite stock launcher/patch files)
+            // 4. [grant, rwx] $xl (can execute plugins)
+            // 5. [deny,  -w-] $xl/{addon, runtime, patches} (same reason as (3) except it's XL this time)
+            // 6. [grant, r-x] $dalamud_dir (can be outside of $xl if someone is manually compiling this)
+            //
+            // Notes:
+            // - $screenshot_dir is unaddressed for now.
+            // - Anything not listed here follows normal access check rules for AppContainer.
+
+            // Keep in mind that files created from normal process usually have medium IL, preventing read(NO_READ_UP) or write(NO_WRITE_UP) access from the app running inside the container
+            // (i.e. low IL process can't access higher IL objects)
+
+            // Create directories as these might not actually exist yet
+            Directory.CreateDirectory(gameConfigDownloadDirectory);
+            Directory.CreateDirectory(xlAddonDirectory);
+            Directory.CreateDirectory(xlRuntimeDirectory);
+            Directory.CreateDirectory(xlPatchesDirectory);
+
+            // TODO: this can be owned by administrator(as Xl.Patcher runs as admin) in which case this can fail
+            config.Grant(context.WorkingDir, true, false, true);
+
+            config.Grant(gameConfigDirectory, true, true, false);
+            config.Deny(Path.Combine(gameConfigDirectory, "downloads"), true, false, false);
+
+            // TODO: must either revoke write access to $xl/addon, $xl/patches and $xl/runtime or change directory structure to support appcontainer
+            config.Grant(xlDirectory, true, true, true);
+            config.Deny(xlAddonDirectory, true, false, false);
+            config.Deny(xlRuntimeDirectory, true, false, false);
+            config.Deny(xlPatchesDirectory, true, false, false);
+
+            if (context.DalamudBinaryDirectory is not null)
+            {
+                config.Grant(context.DalamudBinaryDirectory, true, false, true);
+            }
         }
 
         private static IntPtr TryFindGameWindow(Process process)

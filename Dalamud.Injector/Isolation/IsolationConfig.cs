@@ -39,5 +39,11 @@ public class IsolationConfig
     /// </summary>
     public List<PathPermissionEntry> Paths { get; set; } = new();
 
-    public record PathPermissionEntry(PathMode Mode, bool Read, bool Write, bool Execute);
+    public void Grant(string path, bool r, bool w, bool x)
+        => this.Paths.Add(new PathPermissionEntry(PathMode.Grant, path, r, w, x));
+
+    public void Deny(string path, bool r, bool w, bool x)
+        => this.Paths.Add(new PathPermissionEntry(PathMode.Deny, path, r, w, x));
+
+    public record PathPermissionEntry(PathMode Mode, string Path, bool Read, bool Write, bool Execute);
 }

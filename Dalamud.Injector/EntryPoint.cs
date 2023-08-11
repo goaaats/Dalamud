@@ -813,8 +813,7 @@ namespace Dalamud.Injector
 
                         Log.Verbose("RewriteRemoteEntryPointW called!");
                     }
-                },
-                waitForGameWindow);
+                });
 
             Log.Verbose("Game process started with PID {0}", process.Id);
 
@@ -950,11 +949,6 @@ namespace Dalamud.Injector
             }
 
             Log.Information("Done");
-        }
-
-        private static void AddDefaultAppContainerPaths(IsolationConfig config)
-        {
-            
         }
 
         [DllImport("Dalamud.Boot.dll")]
