@@ -8,6 +8,7 @@ namespace xivfixes {
     void backup_userdata_save(bool bApply);
     void clr_failfast_hijack(bool bApply);
     void prevent_icmphandle_crashes(bool bApply);
+    void appcontainer_fix(bool bApply);
 
     void apply_all(bool bApply);
 }

@@ -32,7 +32,7 @@ public record GameStartContext
     /// <summary>
     /// Gets configuration for AppContainer isolation.
     /// </summary>
-    public IsolationConfig? Isolation { get; init; } = null;
+    public IsolationConfig? IsolationConfig { get; init; } = null;
 
     /// <summary>
     /// Gets the path to where dalamud binaries (i.e. directory containing Dalamud.dll) are located.

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
@@ -68,6 +69,8 @@ internal class DalamudInterface : IDisposable, IServiceType
     private readonly TextureWrap logoTexture;
     private readonly TextureWrap tsmLogoTexture;
 
+    private readonly List<string> disclaimers = new();
+    
     private bool isCreditsDarkening = false;
     private OutCubic creditsDarkeningAnimation = new(TimeSpan.FromSeconds(10));
 
@@ -90,6 +93,7 @@ internal class DalamudInterface : IDisposable, IServiceType
     private DalamudInterface(
         Dalamud dalamud,
         DalamudConfiguration configuration,
+        DalamudStartInfo startInfo,
         InterfaceManager.InterfaceManagerWithScene interfaceManagerWithScene,
         PluginImageCache pluginImageCache)
     {
@@ -159,6 +163,8 @@ internal class DalamudInterface : IDisposable, IServiceType
 
         this.creditsDarkeningAnimation.Point1 = Vector2.Zero;
         this.creditsDarkeningAnimation.Point2 = new Vector2(CreditsDarkeningMaxAlpha);
+        
+        this.SetupDisclaimers(startInfo);
     }
 
     /// <summary>
@@ -484,6 +490,7 @@ internal class DalamudInterface : IDisposable, IServiceType
         try
         {
             this.DrawHiddenDevMenuOpener();
+            this.DrawDisclaimers();
             this.DrawDevMenu();
 
             if (Service<GameGui>.Get().GameUiHidden)
@@ -571,23 +578,23 @@ internal class DalamudInterface : IDisposable, IServiceType
 
                 ImGui.End();
             }
+        }
+    }
 
-            if (EnvironmentConfiguration.DalamudForceMinHook)
+    private void DrawDisclaimers()
+    {
+        var condition = Service<Condition>.Get();
+        var startPos = ImGui.GetMainViewport().Pos + new Vector2(25);
+
+        if (this.disclaimers.Count > 0 && !condition.Any())
+        {
+            var y = startPos.Y;
+            var fg = ImGui.GetForegroundDrawList();
+                
+            foreach (var disclaimer in this.disclaimers)
             {
-                ImGui.SetNextWindowPos(windowPos, ImGuiCond.Always);
-                ImGui.SetNextWindowBgAlpha(1);
-
-                if (ImGui.Begin(
-                        "Disclaimer",
-                        ImGuiWindowFlags.AlwaysAutoResize | ImGuiWindowFlags.NoBackground |
-                        ImGuiWindowFlags.NoDecoration | ImGuiWindowFlags.NoMove |
-                        ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoMouseInputs |
-                        ImGuiWindowFlags.NoResize | ImGuiWindowFlags.NoSavedSettings))
-                {
-                    ImGui.TextColored(ImGuiColors.DalamudRed, "Is force MinHook!");
-                }
-
-                ImGui.End();
+                fg.AddText(startPos with { Y = y }, 0xFF0000FF, disclaimer);
+                y += ImGui.GetTextLineHeightWithSpacing();
             }
         }
     }
@@ -961,6 +968,27 @@ internal class DalamudInterface : IDisposable, IServiceType
                 }
 
                 ImGui.EndMainMenuBar();
+            }
+        }
+    }
+
+    private void SetupDisclaimers(DalamudStartInfo startInfo)
+    {
+        if (EnvironmentConfiguration.DalamudForceMinHook)
+            this.disclaimers.Add("Force MinHook");
+
+        if (startInfo.UseAppContainer)
+        {
+            try
+            {
+                var isolationConfigPath =
+                    Path.Combine(Path.GetDirectoryName(startInfo.ConfigurationPath!)!, "dalamudIsolation.json");
+                File.WriteAllText(isolationConfigPath, File.ReadAllText(isolationConfigPath));
+                this.disclaimers.Add("AppContainer enabled (!!!config was writable!!!)");
+            }
+            catch (Exception)
+            {
+                this.disclaimers.Add("AppContainer enabled");
             }
         }
     }

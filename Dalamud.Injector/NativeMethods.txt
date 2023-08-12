@@ -4,11 +4,12 @@ FreeSid
 SetEntriesInAcl
 GetNamedSecurityInfoW
 SetNamedSecurityInfoW
-GetLastError
 LocalFree
 HRESULT_FROM_WIN32
 CloseHandle
-FILE_ACCESS_FLAGS
+CreateFile
+FILE_ACCESS_RIGHTS
+GENERIC_ACCESS_RIGHTS
 PROCESS_INFORMATION
 STARTUPINFOEXW
 CreateProcess

@@ -7,7 +7,6 @@ using System.Linq;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text;
-using System.Text.RegularExpressions;
 
 using Dalamud.Game;
 using Dalamud.Injector.Isolation;
@@ -556,6 +555,8 @@ namespace Dalamud.Injector
             var noFixAcl = false;
             var waitForGameWindow = true;
             var encryptArguments = false;
+            var forceIsolation = false;
+            string? isolationConfigPath = null;
 
             var parsingGameArgument = false;
             for (var i = 2; i < args.Count; i++)
@@ -606,6 +607,14 @@ namespace Dalamud.Injector
                 {
                     handleOwner = IntPtr.Parse(args[i].Split('=', 2)[1]);
                 }
+                else if (args[i] == "--force-isolate")
+                {
+                    forceIsolation = true;
+                }
+                else if (args[i].StartsWith("--isolation-config-path="))
+                {
+                    isolationConfigPath = args[i].Split('=', 2)[1];
+                }
                 else if (args[i] == "--")
                 {
                     parsingGameArgument = true;
@@ -616,58 +625,7 @@ namespace Dalamud.Injector
                 }
             }
 
-            var checksumTable = "fX1pGtdS5CAP4_VL";
-            var argDelimiterRegex = new Regex(" (?<!(?:^|[^ ])(?:  )*)/");
-            var kvDelimiterRegex = new Regex(" (?<!(?:^|[^ ])(?:  )*)=");
-            gameArguments = gameArguments.SelectMany(x =>
-            {
-                if (!x.StartsWith("//**sqex0003") || !x.EndsWith("**//"))
-                {
-                    return new List<string>() { x };
-                }
-
-                var checksum = checksumTable.IndexOf(x[x.Length - 5]);
-                if (checksum == -1)
-                {
-                    return new List<string>() { x };
-                }
-
-                var encData = Convert.FromBase64String(x.Substring(12, x.Length - 12 - 5).Replace('-', '+').Replace('_', '/').Replace('*', '='));
-                var rawData = new byte[encData.Length];
-
-                for (var i = (uint)checksum; i < 0x10000u; i += 0x10)
-                {
-                    var bf = new LegacyBlowfish(Encoding.UTF8.GetBytes($"{i << 16:x08}"));
-                    Buffer.BlockCopy(encData, 0, rawData, 0, rawData.Length);
-                    bf.Decrypt(ref rawData);
-                    var rawString = Encoding.UTF8.GetString(rawData).Split('\0', 2).First();
-                    encryptArguments = true;
-                    var args = argDelimiterRegex.Split(rawString).Skip(1).Select(y => string.Join('=', kvDelimiterRegex.Split(y, 2)).Replace("  ", " ")).ToList();
-                    if (!args.Any())
-                    {
-                        continue;
-                    }
-
-                    if (!args.First().StartsWith("T="))
-                    {
-                        continue;
-                    }
-
-                    if (!uint.TryParse(args.First().Substring(2), out var tickCount))
-                    {
-                        continue;
-                    }
-
-                    if (tickCount >> 16 != i)
-                    {
-                        continue;
-                    }
-
-                    return args.Skip(1);
-                }
-
-                return new List<string>() { x };
-            }).ToList();
+            gameArguments = ArgumentEncryption.Decrypt(gameArguments, ref encryptArguments);
 
             if (showHelp)
             {
@@ -752,49 +710,23 @@ namespace Dalamud.Injector
                 });
             }
 
-            string gameArgumentString;
-            if (encryptArguments)
-            {
-                var rawTickCount = (uint)Environment.TickCount;
+            var gameArgumentString = encryptArguments ?
+                                         ArgumentEncryption.Encrypt(gameArguments) :
+                                         string.Join(" ", gameArguments.Select(x => EncodeParameterArgument(x)));
 
-                if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
-                {
-                    [System.Runtime.InteropServices.DllImport("c")]
-#pragma warning disable SA1300
-                    static extern ulong clock_gettime_nsec_np(int clockId);
-#pragma warning restore SA1300
-
-                    const int CLOCK_MONOTONIC_RAW = 4;
-                    var rawTickCountFixed = clock_gettime_nsec_np(CLOCK_MONOTONIC_RAW) / 1000000;
-                    Log.Information("ArgumentBuilder::DeriveKey() fixing up rawTickCount from {0} to {1} on macOS", rawTickCount, rawTickCountFixed);
-                    rawTickCount = (uint)rawTickCountFixed;
-                }
-
-                var ticks = rawTickCount & 0xFFFF_FFFFu;
-                var key = ticks & 0xFFFF_0000u;
-                gameArguments.Insert(0, $"T={ticks}");
-
-                var escapeValue = (string x) => x.Replace(" ", "  ");
-                gameArgumentString = gameArguments.Select(x => x.Split('=', 2)).Aggregate(new StringBuilder(), (whole, part) => whole.Append($" /{escapeValue(part[0])} ={escapeValue(part.Length > 1 ? part[1] : string.Empty)}")).ToString();
-                var bf = new LegacyBlowfish(Encoding.UTF8.GetBytes($"{key:x08}"));
-                var ciphertext = bf.Encrypt(Encoding.UTF8.GetBytes(gameArgumentString));
-                var base64Str = Convert.ToBase64String(ciphertext).Replace('+', '-').Replace('/', '_').Replace('=', '*');
-                var checksum = checksumTable[(int)(key >> 16) & 0xF];
-                gameArgumentString = $"//**sqex0003{base64Str}{checksum}**//";
-            }
-            else
-            {
-                gameArgumentString = string.Join(" ", gameArguments.Select(x => EncodeParameterArgument(x)));
-            }
-
+            var startInfo = AdjustStartInfo(dalamudStartInfo, gamePath);
+            var workingDir = Path.GetDirectoryName(gamePath);
+            var binaryDir = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
             var startContext = new GameStartContext
             {
-                WorkingDir = Path.GetDirectoryName(gamePath),
+                WorkingDir = workingDir,
                 ExePath = gamePath,
                 Arguments = gameArgumentString,
                 DontFixAcl = noFixAcl,
                 WaitForGameWindow = waitForGameWindow,
-                DalamudBinaryDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location),
+                DalamudBinaryDirectory = binaryDir,
+                IsolationConfig = LoadOrCreateIsolationConfig(
+                    isolationConfigPath, forceIsolation, workingDir, binaryDir, startInfo),
             };
 
             var process = GameStart.LaunchGame(
@@ -803,7 +735,13 @@ namespace Dalamud.Injector
                 {
                     if (!withoutDalamud && mode == "entrypoint")
                     {
-                        var startInfo = AdjustStartInfo(dalamudStartInfo, gamePath);
+                        // Enable appcontainer workarounds if we are using isolation
+                        if (startContext.IsolationConfig?.Enabled == true)
+                        {
+                            startInfo.BootEnabledGameFixes!.Add("appcontainer_fix");
+                            startInfo.UseAppContainer = true;
+                        }
+
                         Log.Information("Using start info: {0}", JsonConvert.SerializeObject(startInfo));
                         if (RewriteRemoteEntryPointW(p.Handle, gamePath, JsonConvert.SerializeObject(startInfo)) != 0)
                         {
@@ -811,7 +749,7 @@ namespace Dalamud.Injector
                             throw new Exception("RewriteRemoteEntryPointW failed");
                         }
 
-                        Log.Verbose("RewriteRemoteEntryPointW called!");
+                        Log.Information("RewriteRemoteEntryPointW called!");
                     }
                 });
 
@@ -819,7 +757,6 @@ namespace Dalamud.Injector
 
             if (!withoutDalamud && mode == "inject")
             {
-                var startInfo = AdjustStartInfo(dalamudStartInfo, gamePath);
                 Log.Information("Using start info: {0}", JsonConvert.SerializeObject(startInfo));
                 Inject(process, startInfo, false);
             }
@@ -899,6 +836,89 @@ namespace Dalamud.Injector
             {
                 GameVersion = gameVer,
             };
+        }
+
+        private static IsolationConfig? LoadOrCreateIsolationConfig(
+            string? configPath,
+            bool forceIsolation,
+            string workingDir,
+            string? binaryDir,
+            DalamudStartInfo startInfo)
+        {
+            IsolationConfig? config = null;
+            if (!string.IsNullOrEmpty(configPath))
+            {
+                try
+                {
+                    config = JsonConvert.DeserializeObject<IsolationConfig>(File.ReadAllText(configPath));
+                }
+                catch (Exception e)
+                {
+                    Log.Error(e, "Failed to load isolation config");
+                }
+            }
+
+            config ??= new IsolationConfig();
+            config.Enabled = config.Enabled || forceIsolation;
+
+            var gameConfigDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "My Games", "FINAL FANTASY XIV - A Realm Reborn");
+            var gameConfigDownloadDirectory = Path.Combine(gameConfigDirectory, "downloads");
+            var xlDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "XIVLauncher");
+            var xlAddonDirectory = Path.Combine(xlDirectory, "addon");
+            var xlRuntimeDirectory = Path.Combine(xlDirectory, "runtime");
+            var xlPatchesDirectory = Path.Combine(xlDirectory, "patches");
+
+            // Current policy is:
+            // (Has Low IL)
+            // 1. [grant, r-x] $base_game
+            // 2. [grant, rw-] $game_config
+            // 3. [deny,  -w-] $game_config/downloads (otherwise may overwrite stock launcher/patch files)
+            // 4. [grant, rwx] $xl (can execute plugins)
+            // 5. [deny,  -w-] $xl/{addon, runtime, patches} (same reason as (3) except it's XL this time)
+            // 6. [grant, r-x] $dalamud_dir (can be outside of $xl if someone is manually compiling this)
+            //
+            // Notes:
+            // - $screenshot_dir is unaddressed for now.
+            // - Anything not listed here follows normal access check rules for AppContainer.
+
+            // Keep in mind that files created from normal process usually have medium IL, preventing read(NO_READ_UP) or write(NO_WRITE_UP) access from the app running inside the container
+            // (i.e. low IL process can't access higher IL objects)
+
+            // Create directories as these might not actually exist yet
+            Directory.CreateDirectory(gameConfigDownloadDirectory);
+            Directory.CreateDirectory(xlAddonDirectory);
+            Directory.CreateDirectory(xlRuntimeDirectory);
+            Directory.CreateDirectory(xlPatchesDirectory);
+
+            // TODO: this can be owned by administrator(as Xl.Patcher runs as admin) in which case this can fail
+            config.Grant(workingDir, true, false, true);
+
+            config.Grant(gameConfigDirectory, true, true, false);
+            config.Deny(Path.Combine(gameConfigDirectory, "downloads"), true, false, false);
+
+            // TODO: must either revoke write access to $xl/addon, $xl/patches and $xl/runtime or change directory structure to support appcontainer
+            config.Grant(xlDirectory, true, true, true);
+            config.Deny(xlAddonDirectory, true, false, false);
+            config.Deny(xlRuntimeDirectory, true, false, false);
+            config.Deny(xlPatchesDirectory, true, false, false);
+
+            if (!string.IsNullOrEmpty(binaryDir))
+            {
+                config.Grant(binaryDir, true, false, true);
+            }
+
+            // Grant known log paths(after binary directory, because they might be in there)
+            // TODO: This is confusing, LogPath should not be a folder
+            var logPathWithFile = Path.Combine(startInfo.LogPath!, "dalamud.log");
+            if (File.Exists(logPathWithFile))
+                config.Grant(logPathWithFile, true, true, false);
+            if (File.Exists(startInfo.BootLogPath))
+                config.Grant(startInfo.BootLogPath, true, true, false);
+
+            if (File.Exists(configPath))
+                config.Deny(configPath, true, true, true);
+
+            return config;
         }
 
         private static void Inject(Process process, DalamudStartInfo startInfo, bool tryFixAcl = false)

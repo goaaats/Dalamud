@@ -5,8 +5,14 @@ using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Threading;
+
+using Dalamud.Injector.Container;
 using Dalamud.Injector.Isolation;
+using Dalamud.Injector.Win32;
 using Serilog;
+using Windows.Win32.Security;
+using Windows.Win32.Storage.FileSystem;
+using Windows.Win32.System.Threading;
 
 // ReSharper disable InconsistentNaming
 
@@ -29,8 +35,8 @@ namespace Dalamud.Injector
         {
             Process process = null;
 
-            // We need some defaults in our isolation config, if we have one
-            AddDefaultAppContainerPaths(context);
+            if (context.IsolationConfig?.Enabled == true)
+                return LaunchGameIsolated(context, beforeResume);
 
             var psecDesc = IntPtr.Zero;
             if (!context.DontFixAcl)
@@ -74,9 +80,13 @@ namespace Dalamud.Injector
                     bInheritHandle = false,
                 };
 
-                var lpStartupInfo = new PInvoke.STARTUPINFO
+                var startupInfo = new STARTUPINFOW
                 {
-                    cb = Marshal.SizeOf<PInvoke.STARTUPINFO>(),
+                    cb = (uint)Marshal.SizeOf<STARTUPINFOEXW>(),
+                };
+                var startupInfoEx = new STARTUPINFOEXW
+                {
+                    StartupInfo = startupInfo,
                 };
 
                 var compatLayerPrev = Environment.GetEnvironmentVariable("__COMPAT_LAYER");
@@ -92,16 +102,17 @@ namespace Dalamud.Injector
 
                 try
                 {
+                    Log.Information("Running legacy pinvoke");
                     if (!PInvoke.CreateProcess(
                             null!,
                             $"\"{context.ExePath}\" {context.Arguments}",
                             ref lpProcessAttributes,
                             IntPtr.Zero,
                             false,
-                            PInvoke.CREATE_SUSPENDED,
+                            PROCESS_CREATION_FLAGS.CREATE_SUSPENDED,
                             IntPtr.Zero,
                             context.WorkingDir,
-                            ref lpStartupInfo,
+                            ref startupInfoEx,
                             out lpProcessInformation))
                     {
                         throw new Win32Exception(Marshal.GetLastWin32Error());
@@ -176,6 +187,195 @@ namespace Dalamud.Injector
             }
 
             return process;
+        }
+
+        // This function should become the default, after some careful testing.
+        private static Process LaunchGameIsolated(GameStartContext context, Action<Process> beforeResume)
+        {
+            unsafe
+            {
+                Process process = null;
+
+                var psecDesc = IntPtr.Zero;
+                if (!context.DontFixAcl)
+                {
+                    var userName = Environment.UserName;
+
+                    var pExplicitAccess = default(PInvoke.EXPLICIT_ACCESS);
+                    PInvoke.BuildExplicitAccessWithName(
+                        ref pExplicitAccess,
+                        userName,
+                        PInvoke.STANDARD_RIGHTS_ALL | PInvoke.SPECIFIC_RIGHTS_ALL & ~PInvoke.PROCESS_VM_WRITE,
+                        PInvoke.GRANT_ACCESS,
+                        0);
+
+                    if (PInvoke.SetEntriesInAcl(1, ref pExplicitAccess, IntPtr.Zero, out var newAcl) != 0)
+                    {
+                        throw new Win32Exception(Marshal.GetLastWin32Error());
+                    }
+
+                    if (!PInvoke.InitializeSecurityDescriptor(out var secDesc, PInvoke.SECURITY_DESCRIPTOR_REVISION))
+                    {
+                        throw new Win32Exception(Marshal.GetLastWin32Error());
+                    }
+
+                    if (!PInvoke.SetSecurityDescriptorDacl(ref secDesc, true, newAcl, false))
+                    {
+                        throw new Win32Exception(Marshal.GetLastWin32Error());
+                    }
+
+                    psecDesc = Marshal.AllocHGlobal(Marshal.SizeOf<PInvoke.SECURITY_DESCRIPTOR>());
+                    Marshal.StructureToPtr(secDesc, psecDesc, true);
+                }
+
+                var lpProcessInformation = default(PInvoke.PROCESS_INFORMATION);
+                try
+                {
+                    var lpProcessAttributes = new PInvoke.SECURITY_ATTRIBUTES
+                    {
+                        nLength = Marshal.SizeOf<PInvoke.SECURITY_ATTRIBUTES>(),
+                        lpSecurityDescriptor = psecDesc,
+                        bInheritHandle = false,
+                    };
+
+                    var compatLayerPrev = Environment.GetEnvironmentVariable("__COMPAT_LAYER");
+
+                    if (!string.IsNullOrEmpty(compatLayerPrev) && !compatLayerPrev.Contains("RunAsInvoker"))
+                    {
+                        Environment.SetEnvironmentVariable("__COMPAT_LAYER", $"RunAsInvoker {compatLayerPrev}");
+                    }
+                    else if (string.IsNullOrEmpty(compatLayerPrev))
+                    {
+                        Environment.SetEnvironmentVariable("__COMPAT_LAYER", "RunAsInvoker");
+                    }
+
+                    AppContainer? appContainer = null;
+                    try
+                    {
+                        var startupInfo = new STARTUPINFOW
+                        {
+                            cb = (uint)Marshal.SizeOf<STARTUPINFOEXW>(),
+                        };
+                        var startupInfoEx = new STARTUPINFOEXW
+                        {
+                            StartupInfo = startupInfo,
+                        };
+
+                        using var capabilityList = new CapabilityList(2);
+                        using var procThreadAttrList = new ProcThreadAttributeList(1);
+                        SECURITY_CAPABILITIES capability;
+
+                        if (context.IsolationConfig?.Enabled == true)
+                        {
+                            appContainer = CreateAppContainer(context);
+
+                            capabilityList.Add(WELL_KNOWN_SID_TYPE
+                                                   .WinCapabilityInternetClientServerSid); // for internet access
+                            capabilityList.Add(WELL_KNOWN_SID_TYPE
+                                                   .WinCapabilityPrivateNetworkClientServerSid); // for intranet access (except loopback)
+
+                            capability = new SECURITY_CAPABILITIES
+                            {
+                                AppContainerSid = appContainer.Sid,
+                                Capabilities = capabilityList.AsPointer(),
+                                CapabilityCount = (uint)capabilityList.Count,
+                            };
+
+                            // TODO: CsWin32 generates this as internal for some reason
+                            const nuint PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES = 131081U;
+                            procThreadAttrList.Add(PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES, &capability, Marshal.SizeOf(capability));
+
+                            startupInfoEx.lpAttributeList = procThreadAttrList.AsPointer();
+                            Log.Information("Created appcontainer");
+                        }
+
+                        if (!PInvoke.CreateProcess(
+                                null!,
+                                $"\"{context.ExePath}\" {context.Arguments}",
+                                ref lpProcessAttributes,
+                                IntPtr.Zero,
+                                false,
+                                PROCESS_CREATION_FLAGS.CREATE_SUSPENDED | PROCESS_CREATION_FLAGS.EXTENDED_STARTUPINFO_PRESENT,
+                                IntPtr.Zero,
+                                context.WorkingDir,
+                                ref startupInfoEx,
+                                out lpProcessInformation))
+                        {
+                            throw new Win32Exception();
+                        }
+                    }
+                    finally
+                    {
+                        Environment.SetEnvironmentVariable("__COMPAT_LAYER", compatLayerPrev);
+
+                        appContainer?.Dispose();
+                    }
+
+                    if (!context.DontFixAcl)
+                        DisableSeDebug(lpProcessInformation.hProcess);
+
+                    process = new ExistingProcess(lpProcessInformation.hProcess);
+
+                    beforeResume?.Invoke(process);
+
+                    PInvoke.ResumeThread(lpProcessInformation.hThread);
+
+                    // Ensure that the game main window is prepared
+                    if (context.WaitForGameWindow)
+                    {
+                        try
+                        {
+                            var tries = 0;
+                            const int maxTries = 420;
+                            const int timeout = 50;
+
+                            do
+                            {
+                                Thread.Sleep(timeout);
+
+                                if (process.HasExited)
+                                    throw new GameStartException();
+
+                                if (tries > maxTries)
+                                    throw new GameStartException($"Couldn't find game window after {maxTries * timeout}ms");
+
+                                tries++;
+                            }
+                            while (TryFindGameWindow(process) == IntPtr.Zero);
+                        }
+                        catch (InvalidOperationException)
+                        {
+                            throw new GameStartException("Could not read process information.");
+                        }
+                    }
+
+                    if (!context.DontFixAcl)
+                        CopyAclFromSelfToTargetProcess(lpProcessInformation.hProcess);
+                }
+                catch (Exception ex)
+                {
+                    Log.Error(ex, "[GameStart] Uncaught error during initialization, trying to kill process");
+
+                    try
+                    {
+                        process?.Kill();
+                    }
+                    catch (Exception killEx)
+                    {
+                        Log.Error(killEx, "[GameStart] Could not kill process");
+                    }
+
+                    throw;
+                }
+                finally
+                {
+                    if (psecDesc != IntPtr.Zero)
+                        Marshal.FreeHGlobal(psecDesc);
+                    PInvoke.CloseHandle(lpProcessInformation.hThread);
+                }
+
+                return process;
+            }
         }
 
         /// <summary>
@@ -307,57 +507,33 @@ namespace Dalamud.Injector
             PInvoke.CloseHandle(tokenHandle);
         }
 
-        private static void AddDefaultAppContainerPaths(GameStartContext context)
+        private static AppContainer CreateAppContainer(GameStartContext context)
         {
-            var config = context.Isolation;
-            if (config == null)
-                return;
+            var appContainer = new AppContainer("Dalamud.Container", "Dalamud", "A container for sandboxing dalamud plugins");
 
-            var gameConfigDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "My Games", "FINAL FANTASY XIV - A Realm Reborn");
-            var gameConfigDownloadDirectory = Path.Combine(gameConfigDirectory, "downloads");
-            var xlDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "XIVLauncher");
-            var xlAddonDirectory = Path.Combine(xlDirectory, "addon");
-            var xlRuntimeDirectory = Path.Combine(xlDirectory, "runtime");
-            var xlPatchesDirectory = Path.Combine(xlDirectory, "patches");
-
-            // Current policy is:
-            // (Has Low IL)
-            // 1. [grant, r-x] $base_game
-            // 2. [grant, rw-] $game_config
-            // 3. [deny,  -w-] $game_config/downloads (otherwise may overwrite stock launcher/patch files)
-            // 4. [grant, rwx] $xl (can execute plugins)
-            // 5. [deny,  -w-] $xl/{addon, runtime, patches} (same reason as (3) except it's XL this time)
-            // 6. [grant, r-x] $dalamud_dir (can be outside of $xl if someone is manually compiling this)
-            //
-            // Notes:
-            // - $screenshot_dir is unaddressed for now.
-            // - Anything not listed here follows normal access check rules for AppContainer.
-
-            // Keep in mind that files created from normal process usually have medium IL, preventing read(NO_READ_UP) or write(NO_WRITE_UP) access from the app running inside the container
-            // (i.e. low IL process can't access higher IL objects)
-
-            // Create directories as these might not actually exist yet
-            Directory.CreateDirectory(gameConfigDownloadDirectory);
-            Directory.CreateDirectory(xlAddonDirectory);
-            Directory.CreateDirectory(xlRuntimeDirectory);
-            Directory.CreateDirectory(xlPatchesDirectory);
-
-            // TODO: this can be owned by administrator(as Xl.Patcher runs as admin) in which case this can fail
-            config.Grant(context.WorkingDir, true, false, true);
-
-            config.Grant(gameConfigDirectory, true, true, false);
-            config.Deny(Path.Combine(gameConfigDirectory, "downloads"), true, false, false);
-
-            // TODO: must either revoke write access to $xl/addon, $xl/patches and $xl/runtime or change directory structure to support appcontainer
-            config.Grant(xlDirectory, true, true, true);
-            config.Deny(xlAddonDirectory, true, false, false);
-            config.Deny(xlRuntimeDirectory, true, false, false);
-            config.Deny(xlPatchesDirectory, true, false, false);
-
-            if (context.DalamudBinaryDirectory is not null)
+            foreach (var pathEntry in context.IsolationConfig!.Paths)
             {
-                config.Grant(context.DalamudBinaryDirectory, true, false, true);
+                var accessFlags = (FILE_ACCESS_RIGHTS)0;
+
+                if (pathEntry.Read)
+                    accessFlags |= FILE_ACCESS_RIGHTS.FILE_GENERIC_READ;
+                if (pathEntry.Write)
+                    accessFlags |= FILE_ACCESS_RIGHTS.FILE_GENERIC_WRITE | FILE_ACCESS_RIGHTS.DELETE;
+                if (pathEntry.Execute)
+                    accessFlags |= FILE_ACCESS_RIGHTS.FILE_GENERIC_EXECUTE;
+
+                if (pathEntry.Mode == IsolationConfig.PathMode.Grant)
+                    appContainer.GrantFileAccess(pathEntry.Path, accessFlags);
+                else if (pathEntry.Mode == IsolationConfig.PathMode.Deny)
+                    appContainer.DenyFileAccess(pathEntry.Path, accessFlags);
+
+                Log.Information("Isolation: {Path} {Mode} {Access}", pathEntry.Path, pathEntry.Mode, accessFlags);
             }
+
+            if (context.IsolationConfig.AllowLocalNetwork)
+                throw new NotImplementedException();
+
+            return appContainer;
         }
 
         private static IntPtr TryFindGameWindow(Process process)
@@ -527,10 +703,10 @@ namespace Dalamud.Injector
                ref SECURITY_ATTRIBUTES lpProcessAttributes,
                IntPtr lpThreadAttributes,
                bool bInheritHandles,
-               UInt32 dwCreationFlags,
+               PROCESS_CREATION_FLAGS dwCreationFlags,
                IntPtr lpEnvironment,
                string lpCurrentDirectory,
-               [In] ref STARTUPINFO lpStartupInfo,
+               [In] ref STARTUPINFOEXW lpStartupInfo,
                out PROCESS_INFORMATION lpProcessInformation);
 
             [DllImport("kernel32.dll", SetLastError = true)]
@@ -655,29 +831,6 @@ namespace Dalamud.Injector
                 public IntPtr Group;
                 public IntPtr Sacl;
                 public IntPtr Dacl;
-            }
-
-            [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
-            public struct STARTUPINFO
-            {
-                public Int32 cb;
-                public string lpReserved;
-                public string lpDesktop;
-                public string lpTitle;
-                public Int32 dwX;
-                public Int32 dwY;
-                public Int32 dwXSize;
-                public Int32 dwYSize;
-                public Int32 dwXCountChars;
-                public Int32 dwYCountChars;
-                public Int32 dwFillAttribute;
-                public Int32 dwFlags;
-                public Int16 wShowWindow;
-                public Int16 cbReserved2;
-                public IntPtr lpReserved2;
-                public IntPtr hStdInput;
-                public IntPtr hStdOutput;
-                public IntPtr hStdError;
             }
 
             [StructLayout(LayoutKind.Sequential)]

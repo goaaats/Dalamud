@@ -422,23 +422,6 @@ void xivfixes::backup_userdata_save(bool bApply) {
     static std::mutex s_mtx;
 
     if (bApply) {
-        /*
-        DWORD oldProt = 0;
-
-        auto inst = utils::signature_finder()
-            .look_in(utils::loaded_module(g_hGameInstance), ".text")
-            .look_for_hex("75 ?? 83 c8 ff 4c 8b ?? ?? ?? ?? ?? 00 4c 8b ?? 24 ?? ?? ?? 00 4c 8b ?? 24 ?? ?? ?? 00 48 8B ?? ?? ?? ?? 00 48 ?? ?? e8")
-            .find_one()
-            .Match;
-
-        // yes this is a kludge until we make a proper solution for it
-        auto veryBad = const_cast<char*>(inst.data());
-        VirtualProtect(veryBad, 1, PAGE_EXECUTE_READWRITE, &oldProt);
-        veryBad[0] = 0xEB;
-        VirtualProtect(veryBad, 1, oldProt, &oldProt);
-        FlushInstructionCache(GetCurrentProcess(), veryBad, 1);
-        */
-        
         if (!g_startInfo.BootEnabledGameFixes.contains("backup_userdata_save")) {
             logging::I("{} Turned off via environment variable.", LogTag);
             return;
@@ -607,6 +590,49 @@ void xivfixes::prevent_icmphandle_crashes(bool bApply) {
     }
 }
 
+
+void xivfixes::appcontainer_fix(bool bApply) {
+    static const char* LogTag = "[xivfixes:appcontainer_fix]";
+
+    static std::optional<hooks::import_hook<decltype(IcmpCloseHandle)>> s_hookIcmpCloseHandle;
+
+    if (bApply) {
+        if (!g_startInfo.BootEnabledGameFixes.contains("appcontainer_fix")) {
+            logging::I("{} Turned off via environment variable.", LogTag);
+            return;
+        }
+
+        DWORD oldProt = 0;
+
+        auto result = utils::signature_finder()
+            .look_in(utils::loaded_module(g_hGameInstance), ".text")
+            .look_for_hex("75 ?? 83 c8 ff 4c 8b ?? ?? ?? ?? ?? 00 4c 8b ?? 24 ?? ?? ?? 00 4c 8b ?? 24 ?? ?? ?? 00 48 8B ?? ?? ?? ?? 00 48 ?? ?? e8")
+            .find_one()
+            .Match;
+
+        // yes this is a kludge until we make a proper solution for it
+        const auto instructions = const_cast<char*>(result.data());
+        VirtualProtect(instructions, 1, PAGE_EXECUTE_READWRITE, &oldProt);
+
+        if (instructions[0] != static_cast<char>(0x75)) { // 75 38
+            logging::E("{} Unexpected signature match, aborting.", LogTag);
+            return;
+        }
+        instructions[0] = static_cast<char>(0xEB);
+
+        VirtualProtect(instructions, 1, oldProt, &oldProt);
+        FlushInstructionCache(GetCurrentProcess(), instructions, 1);
+
+        logging::I("{} Enable", LogTag);
+    }
+    else {
+        if (s_hookIcmpCloseHandle) {
+            logging::I("{} Disable", LogTag);
+            s_hookIcmpCloseHandle.reset();
+        }
+    }
+}
+
 void xivfixes::apply_all(bool bApply) {
     for (const auto& [taskName, taskFunction] : std::initializer_list<std::pair<const char*, void(*)(bool)>>
         {
@@ -616,7 +642,8 @@ void xivfixes::apply_all(bool bApply) {
             { "redirect_openprocess", &redirect_openprocess },
             { "backup_userdata_save", &backup_userdata_save },
             { "clr_failfast_hijack", &clr_failfast_hijack },
-            { "prevent_icmphandle_crashes", &prevent_icmphandle_crashes }
+            { "prevent_icmphandle_crashes", &prevent_icmphandle_crashes },
+            { "appcontainer_fix", &appcontainer_fix }
         }
         ) {
         try {

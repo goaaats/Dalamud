@@ -1,6 +1,6 @@
 ﻿using System;
 using System.Diagnostics;
-
+using System.Runtime.Versioning;
 using Windows.Win32;
 using Windows.Win32.Foundation;
 using Windows.Win32.Security;
@@ -15,6 +15,7 @@ internal sealed class AppContainer : IDisposable
 
     public PSID Sid => this.sid;
 
+    [SupportedOSPlatform("windows8.0")]
     public AppContainer(string containerName, string? displayName, string? description)
     {
         HRESULT hresult;
@@ -39,6 +40,9 @@ internal sealed class AppContainer : IDisposable
         hresult.ThrowOnFailure();
     }
 
+    /// <summary>
+    /// Finalizes an instance of the <see cref="AppContainer"/> class.
+    /// </summary>
     ~AppContainer()
     {
         this.DisposeUnmanaged();
@@ -57,6 +61,7 @@ internal sealed class AppContainer : IDisposable
         PInvoke.FreeSid(this.sid);
     }
 
+    [SupportedOSPlatform("windows5.1.2600")]
     private void AddNamedObjectDacl(SE_OBJECT_TYPE objectType, string path, ACCESS_MODE accessMode, uint accessMask)
     {
         unsafe
@@ -107,7 +112,7 @@ internal sealed class AppContainer : IDisposable
                         null);
                     if (errc != WIN32_ERROR.ERROR_SUCCESS)
                     {
-                        throw new Exception($"Failed to update DACL information on {path}");
+                        throw new Exception($"Failed to update DACL information on {path} ({errc:x})");
                     }
                 }
             }
@@ -115,18 +120,20 @@ internal sealed class AppContainer : IDisposable
             {
                 if (newPacl is not null)
                 {
-                    PInvoke.LocalFree((IntPtr)newPacl);
+                    PInvoke.LocalFree((HLOCAL)newPacl);
                 }
             }
         }
     }
 
-    public void GrantFileAccess(string path, FILE_ACCESS_FLAGS accessMask)
+    [SupportedOSPlatform("windows5.1.2600")]
+    public void GrantFileAccess(string path, FILE_ACCESS_RIGHTS accessMask)
     {
         this.AddNamedObjectDacl(SE_OBJECT_TYPE.SE_FILE_OBJECT, path, ACCESS_MODE.GRANT_ACCESS, (uint)accessMask);
     }
 
-    public void DenyFileAccess(string path, FILE_ACCESS_FLAGS accessMask)
+    [SupportedOSPlatform("windows5.1.2600")]
+    public void DenyFileAccess(string path, FILE_ACCESS_RIGHTS accessMask)
     {
         this.AddNamedObjectDacl(SE_OBJECT_TYPE.SE_FILE_OBJECT, path, ACCESS_MODE.DENY_ACCESS, (uint)accessMask);
     }

@@ -1,7 +1,7 @@
 ﻿using System;
 using System.ComponentModel;
 using System.Runtime.InteropServices;
-
+using System.Runtime.Versioning;
 using Windows.Win32;
 using Windows.Win32.System.Threading;
 
@@ -13,28 +13,32 @@ internal sealed class ProcThreadAttributeList : IDisposable
 
     public unsafe LPPROC_THREAD_ATTRIBUTE_LIST AsPointer() => (LPPROC_THREAD_ATTRIBUTE_LIST)(void*)this.mAttributeListData;
 
+    [SupportedOSPlatform("windows6.0.6000")]
     public ProcThreadAttributeList(int count)
     {
         nuint attributeAllocSize = default;
 
-        // First call is to ask for its size
-        PInvoke.InitializeProcThreadAttributeList(
-            (LPPROC_THREAD_ATTRIBUTE_LIST)null,
-            (uint)count,
-            0,
-            ref attributeAllocSize);
-
-        this.mAttributeListData = Marshal.AllocCoTaskMem((int)attributeAllocSize);
-
-        // Initialize it for real this time
-        var ok = PInvoke.InitializeProcThreadAttributeList(
-            this.AsPointer(),
-            (uint)count,
-            0,
-            ref attributeAllocSize);
-        if (!ok)
+        unsafe
         {
-            throw new Win32Exception();
+            // First call is to ask for its size
+            PInvoke.InitializeProcThreadAttributeList(
+                (LPPROC_THREAD_ATTRIBUTE_LIST)null,
+                (uint)count,
+                0,
+                &attributeAllocSize);
+
+            this.mAttributeListData = Marshal.AllocCoTaskMem((int)attributeAllocSize);
+
+            // Initialize it for real this time
+            var ok = PInvoke.InitializeProcThreadAttributeList(
+                this.AsPointer(),
+                (uint)count,
+                0,
+                &attributeAllocSize);
+            if (!ok)
+            {
+                throw new Win32Exception();
+            }
         }
     }
 
@@ -49,12 +53,14 @@ internal sealed class ProcThreadAttributeList : IDisposable
         this.DisposeUnmanaged();
     }
 
+    [SupportedOSPlatform("windows6.0.6000")]
     private void DisposeUnmanaged()
     {
         PInvoke.DeleteProcThreadAttributeList(this.AsPointer());
         Marshal.FreeCoTaskMem(this.mAttributeListData);
     }
 
+    [SupportedOSPlatform("windows6.0.6000")]
     public unsafe void Add(nuint attribute, void* value, int cbSize)
     {
         var ok = PInvoke.UpdateProcThreadAttribute(
