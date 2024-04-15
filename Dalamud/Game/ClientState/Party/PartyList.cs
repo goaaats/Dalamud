@@ -15,11 +15,11 @@ namespace Dalamud.Game.ClientState.Party;
 /// </summary>
 [PluginInterface]
 [InterfaceVersion("1.0")]
-[ServiceManager.BlockingEarlyLoadedService]
+[ServiceManager.EarlyLoadedService]
 #pragma warning disable SA1015
 [ResolveVia<IPartyList>]
 #pragma warning restore SA1015
-public sealed unsafe partial class PartyList : IServiceType, IPartyList
+internal sealed unsafe partial class PartyList : IServiceType, IPartyList
 {
     private const int GroupLength = 8;
     private const int AllianceLength = 20;
@@ -130,7 +130,7 @@ public sealed unsafe partial class PartyList : IServiceType, IPartyList
 /// <summary>
 /// This collection represents the party members present in your party or alliance.
 /// </summary>
-public sealed partial class PartyList
+internal sealed partial class PartyList
 {
     /// <inheritdoc/>
     int IReadOnlyCollection<PartyMember>.Count => this.Length;

@@ -1,8 +1,8 @@
-using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
+using System.Drawing;
 using System.IO;
 using System.Linq;
 using System.Numerics;
@@ -12,11 +12,13 @@ using System.Threading.Tasks;
 using CheapLoc;
 using Dalamud.Configuration.Internal;
 using Dalamud.Game.Command;
+using Dalamud.Interface.Animation.EasingFunctions;
 using Dalamud.Interface.Colors;
 using Dalamud.Interface.Components;
+using Dalamud.Interface.ImGuiNotification.Internal;
 using Dalamud.Interface.Internal.Notifications;
-using Dalamud.Interface.Raii;
-using Dalamud.Interface.Style;
+using Dalamud.Interface.Utility;
+using Dalamud.Interface.Utility.Raii;
 using Dalamud.Interface.Windowing;
 using Dalamud.Logging.Internal;
 using Dalamud.Plugin;
@@ -28,7 +30,6 @@ using Dalamud.Plugin.Internal.Types.Manifest;
 using Dalamud.Support;
 using Dalamud.Utility;
 using ImGuiNET;
-using ImGuiScene;
 
 namespace Dalamud.Interface.Internal.Windows.PluginInstaller;
 
@@ -53,6 +54,13 @@ internal class PluginInstallerWindow : Window, IDisposable
 
     private readonly ProfileManagerWidget profileManagerWidget;
 
+    private readonly Stopwatch tooltipFadeInStopwatch = new();
+    private readonly InOutCubic tooltipFadeEasing = new(TimeSpan.FromSeconds(0.2f))
+    {
+        Point1 = Vector2.Zero,
+        Point2 = Vector2.One,
+    };
+
     private DalamudChangelogManager? dalamudChangelogManager;
     private Task? dalamudChangelogRefreshTask;
     private CancellationTokenSource? dalamudChangelogRefreshTaskCts;
@@ -62,8 +70,8 @@ internal class PluginInstallerWindow : Window, IDisposable
     private string[] testerImagePaths = new string[5];
     private string testerIconPath = string.Empty;
 
-    private TextureWrap?[] testerImages;
-    private TextureWrap? testerIcon;
+    private IDalamudTextureWrap?[]? testerImages;
+    private IDalamudTextureWrap? testerIcon;
 
     private bool testerError = false;
     private bool testerUpdateAvailable = false;
@@ -83,6 +91,11 @@ internal class PluginInstallerWindow : Window, IDisposable
     private bool testingWarningModalDrawing = true;
     private bool testingWarningModalOnNextFrame = false;
 
+    private bool deletePluginConfigWarningModalDrawing = true;
+    private bool deletePluginConfigWarningModalOnNextFrame = false;
+    private string deletePluginConfigWarningModalPluginName = string.Empty;
+    private TaskCompletionSource<bool>? deletePluginConfigWarningModalTaskCompletionSource;
+
     private bool feedbackModalDrawing = true;
     private bool feedbackModalOnNextFrame = false;
     private bool feedbackModalOnNextFrameDontClear = false;
@@ -95,6 +108,7 @@ internal class PluginInstallerWindow : Window, IDisposable
     private int updatePluginCount = 0;
     private List<PluginUpdateStatus>? updatedPlugins;
 
+    [SuppressMessage("StyleCop.CSharp.OrderingRules", "SA1201:Elements should appear in the correct order", Justification = "Makes sense like this")]
     private List<RemotePluginManifest> pluginListAvailable = new();
     private List<LocalPlugin> pluginListInstalled = new();
     private List<AvailablePluginUpdate> pluginListUpdatable = new();
@@ -108,17 +122,22 @@ internal class PluginInstallerWindow : Window, IDisposable
 
     private OperationStatus installStatus = OperationStatus.Idle;
     private OperationStatus updateStatus = OperationStatus.Idle;
+
     private OperationStatus enableDisableStatus = OperationStatus.Idle;
+    private Guid enableDisableWorkingPluginId = Guid.Empty;
 
     private LoadingIndicatorKind loadingIndicatorKind = LoadingIndicatorKind.Unknown;
+
+    private string verifiedCheckmarkHoveredPlugin = string.Empty;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="PluginInstallerWindow"/> class.
     /// </summary>
     /// <param name="imageCache">An instance of <see cref="PluginImageCache"/> class.</param>
-    public PluginInstallerWindow(PluginImageCache imageCache)
+    /// <param name="configuration">An instance of <see cref="DalamudConfiguration"/>.</param>
+    public PluginInstallerWindow(PluginImageCache imageCache, DalamudConfiguration configuration)
         : base(
-            Locs.WindowTitle + (Service<DalamudConfiguration>.Get().DoPluginTest ? Locs.WindowTitleMod_Testing : string.Empty) + "###XlPluginInstaller",
+            Locs.WindowTitle + (configuration.DoPluginTest ? Locs.WindowTitleMod_Testing : string.Empty) + "###XlPluginInstaller",
             ImGuiWindowFlags.NoCollapse | ImGuiWindowFlags.NoScrollbar)
     {
         this.IsOpen = true;
@@ -130,7 +149,6 @@ internal class PluginInstallerWindow : Window, IDisposable
         this.SizeConstraints = new WindowSizeConstraints
         {
             MinimumSize = this.Size.Value,
-            MaximumSize = new Vector2(5000, 5000),
         };
 
         Service<PluginManager>.GetAsync().ContinueWith(pluginManagerTask =>
@@ -157,6 +175,27 @@ internal class PluginInstallerWindow : Window, IDisposable
         this.profileManagerWidget = new(this);
     }
 
+    /// <summary>
+    /// Enum describing pages the plugin installer can be opened to.
+    /// </summary>
+    public enum PluginInstallerOpenKind
+    {
+        /// <summary>
+        /// Open to the "All Plugins" page.
+        /// </summary>
+        AllPlugins,
+
+        /// <summary>
+        /// Open to the "Installed Plugins" page.
+        /// </summary>
+        InstalledPlugins,
+        
+        /// <summary>
+        /// Open to the "Changelogs" page.
+        /// </summary>
+        Changelogs,
+    }
+    
     private enum OperationStatus
     {
         Idle,
@@ -204,6 +243,28 @@ internal class PluginInstallerWindow : Window, IDisposable
         }
     }
 
+    /// <summary>
+    /// Open to the installer to the page specified by <paramref name="kind"/>.
+    /// </summary>
+    /// <param name="kind">The page of the installer to open.</param>
+    public void OpenTo(PluginInstallerOpenKind kind)
+    {
+        this.IsOpen = true;
+        this.SetOpenPage(kind);
+    }
+
+    /// <summary>
+    /// Toggle to the installer to the page specified by <paramref name="kind"/>.
+    /// </summary>
+    /// <param name="kind">The page of the installer to open.</param>
+    public void ToggleTo(PluginInstallerOpenKind kind)
+    {
+        this.Toggle();
+
+        if (this.IsOpen)
+            this.SetOpenPage(kind);
+    }
+
     /// <inheritdoc/>
     public override void OnOpen()
     {
@@ -248,6 +309,7 @@ internal class PluginInstallerWindow : Window, IDisposable
             this.DrawErrorModal();
             this.DrawUpdateModal();
             this.DrawTestingWarningModal();
+            this.DrawDeletePluginConfigWarningModal();
             this.DrawFeedbackModal();
             this.DrawProgressOverlay();
         }
@@ -259,30 +321,6 @@ internal class PluginInstallerWindow : Window, IDisposable
     public void ClearIconCache()
     {
         this.imageCache.ClearIconCache();
-    }
-
-    /// <summary>
-    /// Open the window on the plugin changelogs.
-    /// </summary>
-    public void OpenInstalledPlugins()
-    {
-        // Installed group
-        this.categoryManager.CurrentGroupIdx = 1;
-        // All category
-        this.categoryManager.CurrentCategoryIdx = 0;
-        this.IsOpen = true;
-    }
-
-    /// <summary>
-    /// Open the window on the plugin changelogs.
-    /// </summary>
-    public void OpenPluginChangelogs()
-    {
-        // Changelog group
-        this.categoryManager.CurrentGroupIdx = 3;
-        // Plugins category
-        this.categoryManager.CurrentCategoryIdx = 2;
-        this.IsOpen = true;
     }
 
     /// <summary>
@@ -367,6 +405,33 @@ internal class PluginInstallerWindow : Window, IDisposable
         }
 
         return true;
+    }
+
+    private void SetOpenPage(PluginInstallerOpenKind kind)
+    {
+        switch (kind)
+        {
+            case PluginInstallerOpenKind.AllPlugins:
+                // Plugins group
+                this.categoryManager.CurrentGroupIdx = 2;
+                // All category
+                this.categoryManager.CurrentCategoryIdx = 0;
+                break;
+            case PluginInstallerOpenKind.InstalledPlugins:
+                // Installed group
+                this.categoryManager.CurrentGroupIdx = 1;
+                // All category
+                this.categoryManager.CurrentCategoryIdx = 0;
+                break;
+            case PluginInstallerOpenKind.Changelogs:
+                // Changelog group
+                this.categoryManager.CurrentGroupIdx = 3;
+                // Plugins category
+                this.categoryManager.CurrentCategoryIdx = 2;
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(kind), kind, null);
+        }
     }
 
     private void DrawProgressOverlay()
@@ -531,6 +596,7 @@ internal class PluginInstallerWindow : Window, IDisposable
         using (ImRaii.Disabled(isProfileManager))
         {
             var searchTextChanged = false;
+            var prevSearchText = this.searchText;
             ImGui.SetNextItemWidth(searchInputWidth);
             searchTextChanged |= ImGui.InputTextWithHint(
                 "###XlPluginInstaller_Search",
@@ -550,7 +616,7 @@ internal class PluginInstallerWindow : Window, IDisposable
             }
 
             if (searchTextChanged)
-                this.UpdateCategoriesOnSearchChange();
+                this.UpdateCategoriesOnSearchChange(prevSearchText);
         }
 
         // Disable sort if changelogs or profile editor
@@ -665,10 +731,10 @@ internal class PluginInstallerWindow : Window, IDisposable
                         }
                         else
                         {
-                            this.updatedPlugins = task.Result.Where(res => res.WasUpdated).ToList();
+                            this.updatedPlugins = task.Result.Where(res => res.Status == PluginUpdateStatus.StatusKind.Success).ToList();
                             this.updatePluginCount = this.updatedPlugins.Count;
 
-                            var errorPlugins = task.Result.Where(res => !res.WasUpdated).ToList();
+                            var errorPlugins = task.Result.Where(res => res.Status != PluginUpdateStatus.StatusKind.Success).ToList();
                             var errorPluginCount = errorPlugins.Count;
 
                             if (errorPluginCount > 0)
@@ -676,9 +742,9 @@ internal class PluginInstallerWindow : Window, IDisposable
                                 var errorMessage = this.updatePluginCount > 0
                                                        ? Locs.ErrorModal_UpdaterFailPartial(this.updatePluginCount, errorPluginCount)
                                                        : Locs.ErrorModal_UpdaterFail(errorPluginCount);
-
+                                    
                                 var hintInsert = errorPlugins
-                                                 .Aggregate(string.Empty, (current, pluginUpdateStatus) => $"{current}* {pluginUpdateStatus.InternalName}\n")
+                                                 .Aggregate(string.Empty, (current, pluginUpdateStatus) => $"{current}* {pluginUpdateStatus.InternalName} ({PluginUpdateStatus.LocalizeUpdateStatusKind(pluginUpdateStatus.Status)})\n")
                                                  .TrimEnd();
                                 errorMessage += Locs.ErrorModal_HintBlame(hintInsert);
 
@@ -811,6 +877,55 @@ internal class PluginInstallerWindow : Window, IDisposable
             ImGui.OpenPopup(modalTitle);
             this.testingWarningModalOnNextFrame = false;
             this.testingWarningModalDrawing = true;
+        }
+    }
+
+    private Task<bool> ShowDeletePluginConfigWarningModal(string pluginName)
+    {
+        this.deletePluginConfigWarningModalOnNextFrame = true;
+        this.deletePluginConfigWarningModalPluginName = pluginName;
+        this.deletePluginConfigWarningModalTaskCompletionSource = new TaskCompletionSource<bool>();
+        return this.deletePluginConfigWarningModalTaskCompletionSource.Task;
+    }
+    
+    private void DrawDeletePluginConfigWarningModal()
+    {
+        var modalTitle = Locs.DeletePluginConfigWarningModal_Title;
+
+        if (ImGui.BeginPopupModal(modalTitle, ref this.deletePluginConfigWarningModalDrawing, ImGuiWindowFlags.AlwaysAutoResize | ImGuiWindowFlags.NoScrollbar))
+        {
+            ImGui.Text(Locs.DeletePluginConfigWarningModal_Body(this.deletePluginConfigWarningModalPluginName));
+            ImGui.Spacing();
+
+            var buttonWidth = 120f;
+            ImGui.SetCursorPosX((ImGui.GetWindowWidth() - ((buttonWidth * 2) - (ImGui.GetStyle().ItemSpacing.Y * 2))) / 2);
+
+            if (ImGui.Button(Locs.DeletePluginConfirmWarningModal_Yes, new Vector2(buttonWidth, 40)))
+            {
+                ImGui.CloseCurrentPopup();
+                this.deletePluginConfigWarningModalTaskCompletionSource?.SetResult(true);
+            }
+
+            ImGui.SameLine();
+
+            if (ImGui.Button(Locs.DeletePluginConfirmWarningModal_No, new Vector2(buttonWidth, 40)))
+            {
+                ImGui.CloseCurrentPopup();
+                this.deletePluginConfigWarningModalTaskCompletionSource?.SetResult(false);
+            }
+            
+            ImGui.EndPopup();
+        }
+
+        if (this.deletePluginConfigWarningModalOnNextFrame)
+        {
+            // NOTE(goat): ImGui cannot open a modal if no window is focused, at the moment.
+            // If people click out of the installer into the game while a plugin is installing, we won't be able to show a modal if we don't grab focus.
+            ImGui.SetWindowFocus(this.WindowName);
+
+            ImGui.OpenPopup(modalTitle);
+            this.deletePluginConfigWarningModalOnNextFrame = false;
+            this.deletePluginConfigWarningModalDrawing = true;
         }
     }
 
@@ -967,7 +1082,14 @@ internal class PluginInstallerWindow : Window, IDisposable
             {
                 this.dalamudChangelogRefreshTaskCts = new CancellationTokenSource();
                 this.dalamudChangelogRefreshTask =
-                    Task.Run(this.dalamudChangelogManager.ReloadChangelogAsync, this.dalamudChangelogRefreshTaskCts.Token);
+                    Task.Run(this.dalamudChangelogManager.ReloadChangelogAsync, this.dalamudChangelogRefreshTaskCts.Token)
+                        .ContinueWith(t =>
+                        {
+                            if (!t.IsCompletedSuccessfully)
+                            {
+                                Log.Error(t.Exception, "Failed to load changelogs.");
+                            }
+                        });
             }
 
             return;
@@ -1007,44 +1129,86 @@ internal class PluginInstallerWindow : Window, IDisposable
         }
     }
 
-    private void DrawAvailablePluginList()
-    {
-        var pluginList = this.pluginListAvailable;
+#pragma warning disable SA1201
+    private record PluginInstallerAvailablePluginProxy(RemotePluginManifest? RemoteManifest, LocalPlugin? LocalPlugin);
 
-        if (pluginList.Count == 0)
+    private IEnumerable<PluginInstallerAvailablePluginProxy> GatherProxies()
+    {
+        var proxies = new List<PluginInstallerAvailablePluginProxy>();
+        
+        var availableManifests = this.pluginListAvailable;
+        var installedPlugins = this.pluginListInstalled.ToList(); // Copy intended
+
+        if (availableManifests.Count == 0)
         {
             ImGui.TextColored(ImGuiColors.DalamudGrey, Locs.TabBody_SearchNoCompatible);
-            return;
+            return proxies;
         }
 
-        var filteredManifests = pluginList
-                                .Where(rm => !this.IsManifestFiltered(rm))
-                                .ToList();
+        var filteredAvailableManifests = availableManifests
+                                         .Where(rm => !this.IsManifestFiltered(rm))
+                                         .ToList();
 
-        if (filteredManifests.Count == 0)
+        if (filteredAvailableManifests.Count == 0)
         {
             ImGui.TextColored(ImGuiColors.DalamudGrey2, Locs.TabBody_SearchNoMatching);
-            return;
+            return proxies;
         }
 
-        // get list to show and reset category dirty flag
-        var categoryManifestsList = this.categoryManager.GetCurrentCategoryContent(filteredManifests);
-
-        var i = 0;
-        foreach (var manifest in categoryManifestsList)
+        // Go through all AVAILABLE manifests, associate them with a NON-DEV local plugin, if one is available, and remove it from the pile
+        foreach (var availableManifest in this.categoryManager.GetCurrentCategoryContent(filteredAvailableManifests).Cast<RemotePluginManifest>())
         {
-            if (manifest is not RemotePluginManifest remoteManifest)
+            var plugin = this.pluginListInstalled
+                             .FirstOrDefault(plugin => plugin.Manifest.InternalName == availableManifest.InternalName &&
+                                                       plugin.Manifest.RepoUrl == availableManifest.RepoUrl &&
+                                                       !plugin.IsDev);
+            
+            // We "consumed" this plugin from the pile and remove it. 
+            if (plugin != null)
+            {
+                installedPlugins.Remove(plugin);
+                proxies.Add(new PluginInstallerAvailablePluginProxy(availableManifest, plugin));
+                
                 continue;
-            var (isInstalled, plugin) = this.IsManifestInstalled(remoteManifest);
-
-            ImGui.PushID($"{manifest.InternalName}{manifest.AssemblyVersion}");
-            if (isInstalled)
-            {
-                this.DrawInstalledPlugin(plugin, i++, true);
             }
-            else
+            
+            proxies.Add(new PluginInstallerAvailablePluginProxy(availableManifest, null));
+        }
+        
+        // Now, add all applicable local plugins that haven't been "used up", in most cases either dev or orphaned plugins.
+        foreach (var installedPlugin in installedPlugins)
+        {
+            if (this.IsManifestFiltered(installedPlugin.Manifest))
+                continue;
+            
+            // TODO: We should also check categories here, for good measure
+            
+            proxies.Add(new PluginInstallerAvailablePluginProxy(null, installedPlugin));
+        }
+
+        return proxies;
+    }
+#pragma warning restore SA1201
+
+    private void DrawAvailablePluginList()
+    {
+        var i = 0;
+        foreach (var proxy in this.GatherProxies())
+        {
+            IPluginManifest applicableManifest = proxy.LocalPlugin != null ? proxy.LocalPlugin.Manifest : proxy.RemoteManifest;
+
+            if (applicableManifest == null)
+                throw new Exception("Could not determine manifest for available plugin");
+            
+            ImGui.PushID($"{applicableManifest.InternalName}{applicableManifest.AssemblyVersion}");
+
+            if (proxy.LocalPlugin != null)
             {
-                this.DrawAvailablePlugin(remoteManifest, i++);
+                this.DrawInstalledPlugin(proxy.LocalPlugin, i++, proxy.RemoteManifest, true);
+            }
+            else if (proxy.RemoteManifest != null)
+            {
+                this.DrawAvailablePlugin(proxy.RemoteManifest, i++);
             }
 
             ImGui.PopID();
@@ -1078,7 +1242,12 @@ internal class PluginInstallerWindow : Window, IDisposable
             if (filterTesting && !manager.HasTestingOptIn(plugin.Manifest))
                 continue;
 
-            this.DrawInstalledPlugin(plugin, i++);
+            // Find the applicable remote manifest
+            var remoteManifest = this.pluginListAvailable
+                                 .FirstOrDefault(rm => rm.InternalName == plugin.Manifest.InternalName &&
+                                                       rm.RepoUrl == plugin.Manifest.RepoUrl);
+            
+            this.DrawInstalledPlugin(plugin, i++, remoteManifest);
         }
     }
 
@@ -1107,7 +1276,7 @@ internal class PluginInstallerWindow : Window, IDisposable
         var i = 0;
         foreach (var plugin in filteredList)
         {
-            this.DrawInstalledPlugin(plugin, i++);
+            this.DrawInstalledPlugin(plugin, i++, null);
         }
     }
 
@@ -1198,10 +1367,6 @@ internal class PluginInstallerWindow : Window, IDisposable
                             break;
                         case PluginCategoryManager.CategoryInfo.AppearCondition.DoPluginTest:
                             if (!Service<DalamudConfiguration>.Get().DoPluginTest)
-                                continue;
-                            break;
-                        case PluginCategoryManager.CategoryInfo.AppearCondition.ProfilesEnabled:
-                            if (!Service<DalamudConfiguration>.Get().ProfilesEnabled)
                                 continue;
                             break;
                         default:
@@ -1430,7 +1595,7 @@ internal class PluginInstallerWindow : Window, IDisposable
             ImGui.Button($"{buttonText}##{buttonText}testing");
         }
 
-        this.DrawVisitRepoUrlButton("https://google.com");
+        this.DrawVisitRepoUrlButton("https://google.com", true);
 
         if (this.testerImages != null)
         {
@@ -1516,7 +1681,7 @@ internal class PluginInstallerWindow : Window, IDisposable
 
         ImGuiHelpers.ScaledDummy(20);
 
-        static void CheckImageSize(TextureWrap? image, int maxWidth, int maxHeight, bool requireSquare)
+        static void CheckImageSize(IDalamudTextureWrap? image, int maxWidth, int maxHeight, bool requireSquare)
         {
             if (image == null)
                 return;
@@ -1561,7 +1726,7 @@ internal class PluginInstallerWindow : Window, IDisposable
                     this.testerIcon = im.LoadImage(this.testerIconPath);
                 }
 
-                this.testerImages = new TextureWrap[this.testerImagePaths.Length];
+                this.testerImages = new IDalamudTextureWrap[this.testerImagePaths.Length];
 
                 for (var i = 0; i < this.testerImagePaths.Length; i++)
                 {
@@ -1630,7 +1795,7 @@ internal class PluginInstallerWindow : Window, IDisposable
         ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.5f, 0.5f, 0.5f, 0.35f));
         ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 0);
 
-        if (ImGui.Button($"###plugin{index}CollapsibleBtn", new Vector2(ImGui.GetWindowWidth() - (ImGuiHelpers.GlobalScale * 35), sectionSize)))
+        if (ImGui.Button($"###plugin{index}CollapsibleBtn", new Vector2(ImGui.GetContentRegionAvail().X, sectionSize)))
         {
             if (isOpen)
             {
@@ -1657,26 +1822,35 @@ internal class PluginInstallerWindow : Window, IDisposable
         var iconSize = ImGuiHelpers.ScaledVector2(64, 64);
         var cursorBeforeImage = ImGui.GetCursorPos();
         var rectOffset = ImGui.GetWindowContentRegionMin() + ImGui.GetWindowPos();
+
+        var overlayAlpha = 1.0f;
         if (ImGui.IsRectVisible(rectOffset + cursorBeforeImage, rectOffset + cursorBeforeImage + iconSize))
         {
             var iconTex = this.imageCache.DefaultIcon;
-            var hasIcon = this.imageCache.TryGetIcon(plugin, manifest, isThirdParty, out var cachedIconTex);
+            var hasIcon = this.imageCache.TryGetIcon(plugin, manifest, isThirdParty, out var cachedIconTex, out var loadedSince);
             if (hasIcon && cachedIconTex != null)
             {
                 iconTex = cachedIconTex;
             }
+            
+            const float fadeTime = 0.3f;
+            var iconAlpha = 1f;
 
-            if (pluginDisabled || installableOutdated)
+            if (loadedSince.HasValue)
             {
-                ImGui.PushStyleVar(ImGuiStyleVar.Alpha, 0.4f);
+                float EaseOutCubic(float t) => 1 - MathF.Pow(1 - t, 3);
+                
+                var secondsSinceLoad = (float)DateTime.Now.Subtract(loadedSince.Value).TotalSeconds;
+                var fadeTo = pluginDisabled || installableOutdated ? 0.4f : 1f;
+                
+                float Interp(float to) => Math.Clamp(EaseOutCubic(Math.Min(secondsSinceLoad, fadeTime) / fadeTime) * to, 0, 1);
+                iconAlpha = Interp(fadeTo);
+                overlayAlpha = Interp(1f);
             }
 
+            ImGui.PushStyleVar(ImGuiStyleVar.Alpha, iconAlpha);
             ImGui.Image(iconTex.ImGuiHandle, iconSize);
-
-            if (pluginDisabled || installableOutdated)
-            {
-                ImGui.PopStyleVar();
-            }
+            ImGui.PopStyleVar();
 
             ImGui.SameLine();
             ImGui.SetCursorPos(cursorBeforeImage);
@@ -1684,6 +1858,7 @@ internal class PluginInstallerWindow : Window, IDisposable
 
         var isLoaded = plugin is { IsLoaded: true };
 
+        ImGui.PushStyleVar(ImGuiStyleVar.Alpha, overlayAlpha);
         if (updateAvailable)
             ImGui.Image(this.imageCache.UpdateIcon.ImGuiHandle, iconSize);
         else if ((trouble && !pluginDisabled) || isOrphan)
@@ -1692,14 +1867,18 @@ internal class PluginInstallerWindow : Window, IDisposable
             ImGui.Image(this.imageCache.OutdatedInstallableIcon.ImGuiHandle, iconSize);
         else if (pluginDisabled)
             ImGui.Image(this.imageCache.DisabledIcon.ImGuiHandle, iconSize);
+        /* NOTE: Replaced by the checkmarks for now, let's see if that is fine
         else if (isLoaded && isThirdParty)
             ImGui.Image(this.imageCache.ThirdInstalledIcon.ImGuiHandle, iconSize);
         else if (isThirdParty)
             ImGui.Image(this.imageCache.ThirdIcon.ImGuiHandle, iconSize);
+        */
         else if (isLoaded)
             ImGui.Image(this.imageCache.InstalledIcon.ImGuiHandle, iconSize);
         else
             ImGui.Dummy(iconSize);
+        ImGui.PopStyleVar();
+        
         ImGui.SameLine();
 
         ImGuiHelpers.ScaledDummy(5);
@@ -1709,6 +1888,36 @@ internal class PluginInstallerWindow : Window, IDisposable
 
         // Name
         ImGui.TextUnformatted(label);
+        
+        // Verified Checkmark or dev plugin wrench
+        {
+            ImGui.SameLine();
+            ImGui.Text(" ");
+            ImGui.SameLine();
+
+            var verifiedOutlineColor = KnownColor.White.Vector() with { W = 0.75f };
+            var unverifiedOutlineColor = KnownColor.Black.Vector();
+            var verifiedIconColor = KnownColor.RoyalBlue.Vector() with { W = 0.75f };
+            var unverifiedIconColor = KnownColor.Orange.Vector();
+            var devIconOutlineColor = KnownColor.White.Vector();
+            var devIconColor = KnownColor.MediumOrchid.Vector();
+
+            if (plugin is LocalDevPlugin)
+            {
+                this.DrawFontawesomeIconOutlined(FontAwesomeIcon.Wrench, devIconOutlineColor, devIconColor);
+                this.VerifiedCheckmarkFadeTooltip(label, "This is a dev plugin. You added it.");
+            }
+            else if (!isThirdParty)
+            {
+                this.DrawFontawesomeIconOutlined(FontAwesomeIcon.CheckCircle, verifiedOutlineColor, verifiedIconColor);
+                this.VerifiedCheckmarkFadeTooltip(label, Locs.VerifiedCheckmark_VerifiedTooltip);
+            }
+            else
+            {
+                this.DrawFontawesomeIconOutlined(FontAwesomeIcon.ExclamationCircle, unverifiedOutlineColor, unverifiedIconColor);
+                this.VerifiedCheckmarkFadeTooltip(label, Locs.VerifiedCheckmark_UnverifiedTooltip);
+            }
+        }
 
         // Download count
         var downloadCountText = manifest.DownloadCount > 0
@@ -1731,16 +1940,32 @@ internal class PluginInstallerWindow : Window, IDisposable
         if (plugin is { IsOutdated: true, IsBanned: false } || installableOutdated)
         {
             ImGui.PushStyleColor(ImGuiCol.Text, ImGuiColors.DalamudRed);
-            ImGui.TextWrapped(Locs.PluginBody_Outdated);
+
+            var bodyText = Locs.PluginBody_Outdated + " ";
+            if (updateAvailable)
+                bodyText += Locs.PluginBody_Outdated_CanNowUpdate;
+            else
+                bodyText += Locs.PluginBody_Outdated_WaitForUpdate;
+            
+            ImGui.TextWrapped(bodyText);
             ImGui.PopStyleColor();
         }
         else if (plugin is { IsBanned: true })
         {
             // Banned warning
             ImGui.PushStyleColor(ImGuiCol.Text, ImGuiColors.DalamudRed);
-            ImGuiHelpers.SafeTextWrapped(plugin.BanReason.IsNullOrEmpty()
-                                             ? Locs.PluginBody_Banned
-                                             : Locs.PluginBody_BannedReason(plugin.BanReason));
+            
+            var bodyText = plugin.BanReason.IsNullOrEmpty()
+                               ? Locs.PluginBody_Banned
+                               : Locs.PluginBody_BannedReason(plugin.BanReason);
+            bodyText += " ";
+            
+            if (updateAvailable)
+                bodyText += Locs.PluginBody_Outdated_CanNowUpdate;
+            else
+                bodyText += Locs.PluginBody_Outdated_WaitForUpdate;
+            
+            ImGuiHelpers.SafeTextWrapped(bodyText);
 
             ImGui.PopStyleColor();
         }
@@ -1813,11 +2038,11 @@ internal class PluginInstallerWindow : Window, IDisposable
         var rectOffset = ImGui.GetWindowContentRegionMin() + ImGui.GetWindowPos();
         if (ImGui.IsRectVisible(rectOffset + cursorBeforeImage, rectOffset + cursorBeforeImage + iconSize))
         {
-            TextureWrap icon;
+            IDalamudTextureWrap icon;
             if (log is PluginChangelogEntry pluginLog)
             {
                 icon = this.imageCache.DefaultIcon;
-                var hasIcon = this.imageCache.TryGetIcon(pluginLog.Plugin, pluginLog.Plugin.Manifest, pluginLog.Plugin.IsThirdParty, out var cachedIconTex);
+                var hasIcon = this.imageCache.TryGetIcon(pluginLog.Plugin, pluginLog.Plugin.Manifest, pluginLog.Plugin.IsThirdParty, out var cachedIconTex, out _);
                 if (hasIcon && cachedIconTex != null)
                 {
                     icon = cachedIconTex;
@@ -1869,7 +2094,6 @@ internal class PluginInstallerWindow : Window, IDisposable
     private void DrawAvailablePlugin(RemotePluginManifest manifest, int index)
     {
         var configuration = Service<DalamudConfiguration>.Get();
-        var notifications = Service<NotificationManager>.Get();
         var pluginManager = Service<PluginManager>.Get();
 
         var useTesting = pluginManager.UseTesting(manifest);
@@ -1947,6 +2171,7 @@ internal class PluginInstallerWindow : Window, IDisposable
             }
             else
             {
+                using var color = ImRaii.PushColor(ImGuiCol.Button, ImGuiColors.DalamudRed.Darken(0.3f).Fade(0.4f));
                 var buttonText = Locs.PluginButton_InstallVersion(versionString);
                 if (ImGui.Button($"{buttonText}##{buttonText}{index}"))
                 {
@@ -1954,13 +2179,22 @@ internal class PluginInstallerWindow : Window, IDisposable
                 }
             }
 
-            this.DrawVisitRepoUrlButton(manifest.RepoUrl);
+            ImGui.SameLine();
+            ImGuiHelpers.ScaledDummy(10);
+            ImGui.SameLine();
 
+            if (this.DrawVisitRepoUrlButton(manifest.RepoUrl, true))
+            {
+                ImGui.SameLine();
+                ImGuiHelpers.ScaledDummy(3);
+            }
+            
             if (!manifest.SourceRepo.IsThirdParty && manifest.AcceptsFeedback)
             {
-                this.DrawSendFeedbackButton(manifest, false);
+                ImGui.SameLine();
+                this.DrawSendFeedbackButton(manifest, false, true);
             }
-
+            
             ImGuiHelpers.ScaledDummy(5);
 
             if (this.DrawPluginImages(null, manifest, isThirdParty, index))
@@ -1976,7 +2210,6 @@ internal class PluginInstallerWindow : Window, IDisposable
     {
         var configuration = Service<DalamudConfiguration>.Get();
         var pluginManager = Service<PluginManager>.Get();
-        var startInfo = Service<DalamudStartInfo>.Get();
 
         if (ImGui.BeginPopupContextItem("ItemContextMenu"))
         {
@@ -1997,31 +2230,39 @@ internal class PluginInstallerWindow : Window, IDisposable
 
             if (ImGui.Selectable(Locs.PluginContext_DeletePluginConfig))
             {
-                Log.Debug($"Deleting config for {manifest.InternalName}");
+                this.ShowDeletePluginConfigWarningModal(manifest.Name).ContinueWith(t =>
+                {
+                    var shouldDelete = t.Result;
 
-                this.installStatus = OperationStatus.InProgress;
-
-                Task.Run(() =>
+                    if (shouldDelete)
                     {
-                        pluginManager.PluginConfigs.Delete(manifest.InternalName);
+                        Log.Debug($"Deleting config for {manifest.InternalName}");
 
-                        var path = Path.Combine(startInfo.PluginDirectory, manifest.InternalName);
-                        if (Directory.Exists(path))
-                            Directory.Delete(path, true);
-                    })
-                    .ContinueWith(task =>
-                    {
-                        this.installStatus = OperationStatus.Idle;
+                        this.installStatus = OperationStatus.InProgress;
 
-                        this.DisplayErrorContinuation(task, Locs.ErrorModal_DeleteConfigFail(manifest.InternalName));
-                    });
+                        Task.Run(() =>
+                            {
+                                pluginManager.PluginConfigs.Delete(manifest.InternalName);
+                                var dir = pluginManager.PluginConfigs.GetDirectory(manifest.InternalName);
+
+                                if (Directory.Exists(dir))
+                                    Directory.Delete(dir, true);
+                            })
+                            .ContinueWith(task =>
+                            {
+                                this.installStatus = OperationStatus.Idle;
+
+                                this.DisplayErrorContinuation(task, Locs.ErrorModal_DeleteConfigFail(manifest.InternalName));
+                            });
+                    }
+                });
             }
 
             ImGui.EndPopup();
         }
     }
 
-    private void DrawInstalledPlugin(LocalPlugin plugin, int index, bool showInstalled = false)
+    private void DrawInstalledPlugin(LocalPlugin plugin, int index, RemotePluginManifest? remoteManifest, bool showInstalled = false)
     {
         var configuration = Service<DalamudConfiguration>.Get();
         var commandManager = Service<CommandManager>.Get();
@@ -2081,6 +2322,11 @@ internal class PluginInstallerWindow : Window, IDisposable
         }
 
         var availablePluginUpdate = this.pluginListUpdatable.FirstOrDefault(up => up.InstalledPlugin == plugin);
+        
+        // Dev plugins can never update
+        if (plugin.IsDev)
+            availablePluginUpdate = null;
+        
         // Update available
         if (availablePluginUpdate != default)
         {
@@ -2094,7 +2340,7 @@ internal class PluginInstallerWindow : Window, IDisposable
             var update = this.updatedPlugins.FirstOrDefault(update => update.InternalName == plugin.Manifest.InternalName);
             if (update != default)
             {
-                if (update.WasUpdated)
+                if (update.Status == PluginUpdateStatus.StatusKind.Success)
                 {
                     thisWasUpdated = true;
                     label += Locs.PluginTitleMod_Updated;
@@ -2141,7 +2387,10 @@ internal class PluginInstallerWindow : Window, IDisposable
         }
 
         ImGui.PushID($"installed{index}{plugin.Manifest.InternalName}");
-        var hasChangelog = !plugin.Manifest.Changelog.IsNullOrEmpty();
+        
+        var applicableChangelog = plugin.IsTesting ? remoteManifest?.Changelog : remoteManifest?.TestingChangelog;
+        var hasChangelog = !applicableChangelog.IsNullOrWhitespace();
+        var didDrawChangelogInsideCollapsible = false;
 
         if (this.DrawPluginCollapsingHeader(label, plugin, plugin.Manifest, plugin.IsThirdParty, trouble, availablePluginUpdate != default, false, false, plugin.IsOrphaned, () => this.DrawInstalledPluginContextMenu(plugin, testingOptIn), index))
         {
@@ -2207,8 +2456,7 @@ internal class PluginInstallerWindow : Window, IDisposable
             {
                 var commands = commandManager.Commands
                                              .Where(cInfo => 
-                                                        cInfo.Value != null &&
-                                                        cInfo.Value.ShowInHelp &&
+                                                        cInfo.Value is { ShowInHelp: true } &&
                                                         cInfo.Value.LoaderAssemblyName == plugin.Manifest.InternalName)
                                              .ToArray();
 
@@ -2219,22 +2467,34 @@ internal class PluginInstallerWindow : Window, IDisposable
                     {
                         ImGuiHelpers.SafeTextWrapped($"{command.Key} → {command.Value.HelpMessage}");
                     }
+                    
+                    ImGuiHelpers.ScaledDummy(3);
                 }
+            }
+
+            if (plugin is LocalDevPlugin devPlugin)
+            {
+                this.DrawDevPluginValidationIssues(devPlugin);
+                ImGuiHelpers.ScaledDummy(5);
             }
 
             // Controls
             this.DrawPluginControlButton(plugin, availablePluginUpdate);
             this.DrawDevPluginButtons(plugin);
+            this.DrawVisitRepoUrlButton(plugin.Manifest.RepoUrl, false);
             this.DrawDeletePluginButton(plugin);
-            this.DrawVisitRepoUrlButton(plugin.Manifest.RepoUrl);
 
             if (canFeedback)
             {
-                this.DrawSendFeedbackButton(plugin.Manifest, plugin.IsTesting);
+                ImGui.SameLine();
+                this.DrawSendFeedbackButton(plugin.Manifest, plugin.IsTesting, false);
             }
 
             if (availablePluginUpdate != default && !plugin.IsDev)
+            {
+                ImGui.SameLine();
                 this.DrawUpdateSinglePluginButton(availablePluginUpdate);
+            }
 
             ImGui.SameLine();
             ImGui.TextColored(ImGuiColors.DalamudGrey3, $" v{plugin.EffectiveVersion}");
@@ -2250,7 +2510,8 @@ internal class PluginInstallerWindow : Window, IDisposable
             {
                 if (ImGui.TreeNode(Locs.PluginBody_CurrentChangeLog(plugin.EffectiveVersion)))
                 {
-                    this.DrawInstalledPluginChangelog(plugin.Manifest);
+                    didDrawChangelogInsideCollapsible = true;
+                    this.DrawInstalledPluginChangelog(applicableChangelog);
                     ImGui.TreePop();
                 }
             }
@@ -2258,23 +2519,24 @@ internal class PluginInstallerWindow : Window, IDisposable
             if (availablePluginUpdate != default && !availablePluginUpdate.UpdateManifest.Changelog.IsNullOrWhitespace())
             {
                 var availablePluginUpdateVersion = availablePluginUpdate.UseTesting ? availablePluginUpdate.UpdateManifest.TestingAssemblyVersion : availablePluginUpdate.UpdateManifest.AssemblyVersion;
-                if (ImGui.TreeNode(Locs.PluginBody_UpdateChangeLog(availablePluginUpdateVersion)))
+                var availableChangelog = availablePluginUpdate.UseTesting ? availablePluginUpdate.UpdateManifest.TestingChangelog : availablePluginUpdate.UpdateManifest.Changelog;
+                if (!availableChangelog.IsNullOrWhitespace() && ImGui.TreeNode(Locs.PluginBody_UpdateChangeLog(availablePluginUpdateVersion)))
                 {
-                    this.DrawInstalledPluginChangelog(availablePluginUpdate.UpdateManifest);
+                    this.DrawInstalledPluginChangelog(availableChangelog);
                     ImGui.TreePop();
                 }
             }
         }
 
-        if (thisWasUpdated && hasChangelog)
+        if (thisWasUpdated && hasChangelog && !didDrawChangelogInsideCollapsible)
         {
-            this.DrawInstalledPluginChangelog(plugin.Manifest);
+            this.DrawInstalledPluginChangelog(applicableChangelog);
         }
 
         ImGui.PopID();
     }
 
-    private void DrawInstalledPluginChangelog(IPluginManifest manifest)
+    private void DrawInstalledPluginChangelog(string changelog)
     {
         ImGuiHelpers.ScaledDummy(5);
 
@@ -2287,7 +2549,7 @@ internal class PluginInstallerWindow : Window, IDisposable
         {
             ImGui.Text("Changelog:");
             ImGuiHelpers.ScaledDummy(2);
-            ImGuiHelpers.SafeTextWrapped(manifest.Changelog!);
+            ImGuiHelpers.SafeTextWrapped(changelog!);
         }
 
         ImGui.EndChild();
@@ -2334,17 +2596,25 @@ internal class PluginInstallerWindow : Window, IDisposable
 
             if (ImGui.MenuItem(Locs.PluginContext_DeletePluginConfigReload))
             {
-                Log.Debug($"Deleting config for {plugin.Manifest.InternalName}");
+                this.ShowDeletePluginConfigWarningModal(plugin.Manifest.Name).ContinueWith(t =>
+                {
+                    var shouldDelete = t.Result;
 
-                this.installStatus = OperationStatus.InProgress;
-
-                Task.Run(() => pluginManager.DeleteConfigurationAsync(plugin))
-                    .ContinueWith(task =>
+                    if (shouldDelete)
                     {
-                        this.installStatus = OperationStatus.Idle;
+                        Log.Debug($"Deleting config for {plugin.Manifest.InternalName}");
 
-                        this.DisplayErrorContinuation(task, Locs.ErrorModal_DeleteConfigFail(plugin.Name));
-                    });
+                        this.installStatus = OperationStatus.InProgress;
+
+                        Task.Run(() => pluginManager.DeleteConfigurationAsync(plugin))
+                            .ContinueWith(task =>
+                            {
+                                this.installStatus = OperationStatus.Idle;
+
+                                this.DisplayErrorContinuation(task, Locs.ErrorModal_DeleteConfigFail(plugin.Manifest.InternalName));
+                            });
+                    }
+                });
             }
 
             ImGui.EndPopup();
@@ -2358,8 +2628,12 @@ internal class PluginInstallerWindow : Window, IDisposable
         var profileManager = Service<ProfileManager>.Get();
         var config = Service<DalamudConfiguration>.Get();
 
-        var applicableForProfiles = plugin.Manifest.SupportsProfiles && !plugin.IsDev;
-        var isDefaultPlugin = profileManager.IsInDefaultProfile(plugin.Manifest.InternalName);
+        var applicableForProfiles = plugin.Manifest.SupportsProfiles /*&& !plugin.IsDev*/;
+        var profilesThatWantThisPlugin = profileManager.Profiles
+                                                       .Where(x => x.WantsPlugin(plugin.Manifest.WorkingPluginId) != null)
+                                                       .ToArray();
+        var isInSingleProfile = profilesThatWantThisPlugin.Length == 1;
+        var isDefaultPlugin = profileManager.IsInDefaultProfile(plugin.Manifest.WorkingPluginId);
 
         // Disable everything if the updater is running or another plugin is operating
         var disabled = this.updateStatus == OperationStatus.InProgress || this.installStatus == OperationStatus.InProgress;
@@ -2394,17 +2668,17 @@ internal class PluginInstallerWindow : Window, IDisposable
 
             foreach (var profile in profileManager.Profiles.Where(x => !x.IsDefaultProfile))
             {
-                var inProfile = profile.WantsPlugin(plugin.Manifest.InternalName) != null;
+                var inProfile = profile.WantsPlugin(plugin.Manifest.WorkingPluginId) != null;
                 if (ImGui.Checkbox($"###profilePick{profile.Guid}{plugin.Manifest.InternalName}", ref inProfile))
                 {
                     if (inProfile)
                     {
-                        Task.Run(() => profile.AddOrUpdateAsync(plugin.Manifest.InternalName, true))
+                        Task.Run(() => profile.AddOrUpdateAsync(plugin.Manifest.WorkingPluginId, plugin.Manifest.InternalName, true))
                             .ContinueWith(this.DisplayErrorContinuation, Locs.Profiles_CouldNotAdd);
                     }
                     else
                     {
-                        Task.Run(() => profile.RemoveAsync(plugin.Manifest.InternalName))
+                        Task.Run(() => profile.RemoveAsync(plugin.Manifest.WorkingPluginId))
                             .ContinueWith(this.DisplayErrorContinuation, Locs.Profiles_CouldNotRemove);
                     }
                 }
@@ -2424,11 +2698,11 @@ internal class PluginInstallerWindow : Window, IDisposable
             if (ImGuiComponents.IconButton(FontAwesomeIcon.Times))
             {
                 // TODO: Work this out
-                Task.Run(() => profileManager.DefaultProfile.AddOrUpdateAsync(plugin.Manifest.InternalName, plugin.IsLoaded, false))
+                Task.Run(() => profileManager.DefaultProfile.AddOrUpdateAsync(plugin.Manifest.WorkingPluginId, plugin.Manifest.InternalName, plugin.IsLoaded, false))
                     .GetAwaiter().GetResult();
                 foreach (var profile in profileManager.Profiles.Where(x => !x.IsDefaultProfile && x.Plugins.Any(y => y.InternalName == plugin.Manifest.InternalName)))
                 {
-                    Task.Run(() => profile.RemoveAsync(plugin.Manifest.InternalName, false))
+                    Task.Run(() => profile.RemoveAsync(plugin.Manifest.WorkingPluginId, false))
                         .GetAwaiter().GetResult();
                 }
 
@@ -2442,6 +2716,10 @@ internal class PluginInstallerWindow : Window, IDisposable
             ImGui.EndPopup();
         }
 
+        var inMultipleProfiles = !isDefaultPlugin && !isInSingleProfile;
+        var inSingleNonDefaultProfileWhichIsDisabled =
+            isInSingleProfile && !profilesThatWantThisPlugin.First().IsEnabled;
+
         if (plugin.State is PluginState.UnloadError or PluginState.LoadError or PluginState.DependencyResolutionFailed && !plugin.IsDev)
         {
             ImGuiComponents.DisabledButton(FontAwesomeIcon.Frown);
@@ -2449,80 +2727,83 @@ internal class PluginInstallerWindow : Window, IDisposable
             if (ImGui.IsItemHovered())
                 ImGui.SetTooltip(Locs.PluginButtonToolTip_UnloadFailed);
         }
-        else if (disabled || !isDefaultPlugin)
+        else if (this.enableDisableStatus == OperationStatus.InProgress && this.enableDisableWorkingPluginId == plugin.Manifest.WorkingPluginId)
+        {
+            ImGuiComponents.DisabledToggleButton(toggleId, this.loadingIndicatorKind == LoadingIndicatorKind.EnablingSingle);
+        }
+        else if (disabled || inMultipleProfiles || inSingleNonDefaultProfileWhichIsDisabled)
         {
             ImGuiComponents.DisabledToggleButton(toggleId, isLoadedAndUnloadable);
 
-            if (!isDefaultPlugin && ImGui.IsItemHovered())
-                ImGui.SetTooltip(Locs.PluginButtonToolTip_NeedsToBeInDefault);
+            if (inMultipleProfiles && ImGui.IsItemHovered())
+                ImGui.SetTooltip(Locs.PluginButtonToolTip_NeedsToBeInSingleProfile);
+            else if (inSingleNonDefaultProfileWhichIsDisabled && ImGui.IsItemHovered())
+                ImGui.SetTooltip(Locs.PluginButtonToolTip_SingleProfileDisabled(profilesThatWantThisPlugin.First().Name));
         }
         else
         {
             if (ImGuiComponents.ToggleButton(toggleId, ref isLoadedAndUnloadable))
             {
-                // TODO: We can technically let profile manager take care of unloading/loading the plugin, but we should figure out error handling first.
+                var applicableProfile = profilesThatWantThisPlugin.First();
+                Log.Verbose("Switching {InternalName} in {Profile} to {State}",
+                            plugin.InternalName, applicableProfile, isLoadedAndUnloadable);
+                
+                try
+                {
+                    // Reload the devPlugin manifest if it's a dev plugin
+                    // The plugin might rely on changed values in the manifest
+                    if (plugin.IsDev)
+                    {
+                        plugin.ReloadManifest();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Log.Error(ex, "Could not reload DevPlugin manifest");
+                }
+                
+                // NOTE: We don't use the profile manager to actually handle loading/unloading here,
+                // because that might cause us to show an error if a plugin we don't actually care about
+                // fails to load/unload. Instead, we just do it ourselves and then update the profile.
+                // There is probably a smarter way to handle this, but it's probably more code.
                 if (!isLoadedAndUnloadable)
                 {
                     this.enableDisableStatus = OperationStatus.InProgress;
                     this.loadingIndicatorKind = LoadingIndicatorKind.DisablingSingle;
+                    this.enableDisableWorkingPluginId = plugin.Manifest.WorkingPluginId;
 
-                    Task.Run(() =>
+                    Task.Run(async () =>
                     {
-                        if (plugin.IsDev)
-                        {
-                            plugin.ReloadManifest();
-                        }
-
-                        var unloadTask = Task.Run(() => plugin.UnloadAsync())
-                                             .ContinueWith(this.DisplayErrorContinuation, Locs.ErrorModal_UnloadFail(plugin.Name));
-
-                        unloadTask.Wait();
-                        if (!unloadTask.Result)
-                        {
-                            this.enableDisableStatus = OperationStatus.Complete;
-                            return;
-                        }
-
-                        // TODO: Work this out
-                        Task.Run(() => profileManager.DefaultProfile.AddOrUpdateAsync(plugin.Manifest.InternalName, false, false))
-                            .GetAwaiter().GetResult();
-                        this.enableDisableStatus = OperationStatus.Complete;
+                        await plugin.UnloadAsync();
+                        await applicableProfile.AddOrUpdateAsync(
+                            plugin.Manifest.WorkingPluginId, plugin.Manifest.InternalName, false, false);
 
                         notifications.AddNotification(Locs.Notifications_PluginDisabled(plugin.Manifest.Name), Locs.Notifications_PluginDisabledTitle, NotificationType.Success);
+                    }).ContinueWith(t =>
+                    {
+                        this.enableDisableStatus = OperationStatus.Complete;
+                        this.DisplayErrorContinuation(t, Locs.ErrorModal_UnloadFail(plugin.Name));
                     });
                 }
                 else
                 {
-                    var enabler = new Task(() =>
+                    async Task Enabler()
                     {
                         this.enableDisableStatus = OperationStatus.InProgress;
                         this.loadingIndicatorKind = LoadingIndicatorKind.EnablingSingle;
+                        this.enableDisableWorkingPluginId = plugin.Manifest.WorkingPluginId;
 
-                        if (plugin.IsDev)
-                        {
-                            plugin.ReloadManifest();
-                        }
+                        await applicableProfile.AddOrUpdateAsync(plugin.Manifest.WorkingPluginId, plugin.Manifest.InternalName, true, false);
+                        await plugin.LoadAsync(PluginLoadReason.Installer);
 
-                        // TODO: Work this out
-                        Task.Run(() => profileManager.DefaultProfile.AddOrUpdateAsync(plugin.Manifest.InternalName, true, false))
-                            .GetAwaiter().GetResult();
+                        notifications.AddNotification(Locs.Notifications_PluginEnabled(plugin.Manifest.Name), Locs.Notifications_PluginEnabledTitle, NotificationType.Success);
+                    }
 
-                        var loadTask = Task.Run(() => plugin.LoadAsync(PluginLoadReason.Installer))
-                                           .ContinueWith(
-                                               this.DisplayErrorContinuation,
-                                               Locs.ErrorModal_LoadFail(plugin.Name));
-
-                        loadTask.Wait();
+                    var continuation = (Task t) =>
+                    {
                         this.enableDisableStatus = OperationStatus.Complete;
-
-                        if (!loadTask.Result)
-                            return;
-
-                        notifications.AddNotification(
-                            Locs.Notifications_PluginEnabled(plugin.Manifest.Name),
-                            Locs.Notifications_PluginEnabledTitle,
-                            NotificationType.Success);
-                    });
+                        this.DisplayErrorContinuation(t, Locs.ErrorModal_LoadFail(plugin.Name));
+                    };
 
                     if (availableUpdate != default && !availableUpdate.InstalledPlugin.IsDev)
                     {
@@ -2532,17 +2813,19 @@ internal class PluginInstallerWindow : Window, IDisposable
 
                             if (shouldUpdate)
                             {
+                                // We need to update the profile right here, because PM will not enable the plugin otherwise
+                                await applicableProfile.AddOrUpdateAsync(plugin.Manifest.WorkingPluginId, plugin.Manifest.InternalName, true, false);
                                 await this.UpdateSinglePlugin(availableUpdate);
                             }
                             else
                             {
-                                enabler.Start();
+                                _ = Task.Run(Enabler).ContinueWith(continuation);
                             }
                         });
                     }
                     else
                     {
-                        enabler.Start();
+                        _ = Task.Run(Enabler).ContinueWith(continuation);
                     }
                 }
             }
@@ -2557,6 +2840,9 @@ internal class PluginInstallerWindow : Window, IDisposable
         {
             // Only if the plugin isn't broken.
             this.DrawOpenPluginSettingsButton(plugin);
+            
+            ImGui.SameLine();
+            ImGuiHelpers.ScaledDummy(5, 0);
         }
 
         if (applicableForProfiles && config.ProfilesEnabled)
@@ -2596,15 +2882,20 @@ internal class PluginInstallerWindow : Window, IDisposable
                              // There is no need to set as Complete for an individual plugin installation
                              this.installStatus = OperationStatus.Idle;
 
-                             var errorMessage = Locs.ErrorModal_SingleUpdateFail(update.UpdateManifest.Name);
-                             return this.DisplayErrorContinuation(task, errorMessage);
+                             if (task.IsCompletedSuccessfully &&
+                                 task.Result.Status != PluginUpdateStatus.StatusKind.Success)
+                             {
+                                 this.ShowErrorModal(
+                                     Locs.ErrorModal_SingleUpdateFail(update.UpdateManifest.Name, PluginUpdateStatus.LocalizeUpdateStatusKind(task.Result.Status)));
+                                 return false;
+                             }
+                                 
+                             return this.DisplayErrorContinuation(task, Locs.ErrorModal_SingleUpdateFail(update.UpdateManifest.Name, "Exception"));
                          });
     }
 
     private void DrawUpdateSinglePluginButton(AvailablePluginUpdate update)
     {
-        ImGui.SameLine();
-
         if (ImGuiComponents.IconButton(FontAwesomeIcon.Download))
         {
             Task.Run(() => this.UpdateSinglePlugin(update));
@@ -2621,10 +2912,39 @@ internal class PluginInstallerWindow : Window, IDisposable
 
     private void DrawOpenPluginSettingsButton(LocalPlugin plugin)
     {
-        if (plugin.DalamudInterface?.UiBuilder?.HasConfigUi ?? false)
+        var hasMainUi = plugin.DalamudInterface?.UiBuilder.HasMainUi ?? false;
+        var hasConfig = plugin.DalamudInterface?.UiBuilder.HasConfigUi ?? false;
+        if (hasMainUi)
         {
             ImGui.SameLine();
-            if (ImGuiComponents.IconButton(FontAwesomeIcon.Cog))
+            if (ImGuiComponents.IconButtonWithText(FontAwesomeIcon.ArrowUpRightFromSquare, Locs.PluginButton_OpenUi))
+            {
+                try
+                {
+                    plugin.DalamudInterface.UiBuilder.OpenMain();
+                }
+                catch (Exception ex)
+                {
+                    Log.Error(ex, $"Error during OpenMain(): {plugin.Name}");
+                }
+            }
+
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.SetTooltip(Locs.PluginButtonToolTip_OpenUi);
+            }
+        }
+
+        if (hasConfig)
+        {
+            if (hasMainUi)
+            {
+                ImGui.SameLine();
+                ImGuiHelpers.ScaledDummy(5, 0);
+            }
+            
+            ImGui.SameLine();
+            if (ImGuiComponents.IconButtonWithText(FontAwesomeIcon.Cog, Locs.PluginButton_OpenSettings))
             {
                 try
                 {
@@ -2632,7 +2952,7 @@ internal class PluginInstallerWindow : Window, IDisposable
                 }
                 catch (Exception ex)
                 {
-                    Log.Error(ex, $"Error during OpenConfigUi: {plugin.Name}");
+                    Log.Error(ex, $"Error during OpenConfig: {plugin.Name}");
                 }
             }
 
@@ -2643,10 +2963,13 @@ internal class PluginInstallerWindow : Window, IDisposable
         }
     }
 
-    private void DrawSendFeedbackButton(IPluginManifest manifest, bool isTesting)
+    private void DrawSendFeedbackButton(IPluginManifest manifest, bool isTesting, bool big)
     {
-        ImGui.SameLine();
-        if (ImGuiComponents.IconButton(FontAwesomeIcon.Comment))
+        var clicked = big ? 
+                          ImGuiComponents.IconButtonWithText(FontAwesomeIcon.Comment, Locs.FeedbackModal_Title) :
+                          ImGuiComponents.IconButton(FontAwesomeIcon.Comment);
+        
+        if (clicked)
         {
             this.feedbackPlugin = manifest;
             this.feedbackModalOnNextFrame = true;
@@ -2659,6 +2982,100 @@ internal class PluginInstallerWindow : Window, IDisposable
         }
     }
 
+    private void DrawDevPluginValidationIssues(LocalDevPlugin devPlugin)
+    {
+        if (!devPlugin.IsLoaded)
+        {
+            ImGuiHelpers.SafeTextColoredWrapped(ImGuiColors.DalamudGrey, "You have to load this plugin to see validation issues.");
+        }
+        else
+        {
+            var problems = PluginValidator.CheckForProblems(devPlugin);
+            if (problems.Count == 0)
+            {
+                ImGui.PushFont(InterfaceManager.IconFont);
+                ImGui.Text(FontAwesomeIcon.Check.ToIconString());
+                ImGui.PopFont();
+                ImGui.SameLine();
+                ImGuiHelpers.SafeTextColoredWrapped(ImGuiColors.HealerGreen, "No validation issues found in this plugin!");
+            }
+            else
+            {
+                var numValidProblems = problems.Count(
+                    problem => devPlugin.DismissedValidationProblems.All(name => name != problem.GetType().Name));
+                var shouldBother = numValidProblems > 0;
+                var validationIssuesText = shouldBother ?
+                    $"Found {problems.Count} validation issue{(problems.Count > 1 ? "s" : string.Empty)} in this plugin!" :
+                    $"{problems.Count} dismissed validation issue{(problems.Count > 1 ? "s" : string.Empty)} in this plugin.";
+                
+                using var col = ImRaii.PushColor(ImGuiCol.Text, shouldBother ? ImGuiColors.DalamudOrange : ImGuiColors.DalamudGrey);
+                using var tree = ImRaii.TreeNode($"{validationIssuesText}###validationIssueCollapsible");
+                if (tree.Success)
+                {
+                    foreach (var problem in problems)
+                    {
+                        var thisProblemIsDismissed = devPlugin.DismissedValidationProblems.Contains(problem.GetType().Name);
+
+                        if (!thisProblemIsDismissed)
+                        {
+                            using (ImRaii.PushColor(ImGuiCol.Text, ImGuiColors.DalamudWhite))
+                            {
+                                if (ImGuiComponents.IconButton(
+                                        $"##dismissValidationIssue{problem.GetType().Name}",
+                                        FontAwesomeIcon.TimesCircle))
+                                {
+                                    devPlugin.DismissedValidationProblems.Add(problem.GetType().Name);
+                                    Service<DalamudConfiguration>.Get().QueueSave();
+                                }
+                            
+                                if (ImGui.IsItemHovered())
+                                {
+                                    ImGui.SetTooltip("Dismiss this issue");
+                                }
+                            }
+
+                            ImGui.SameLine();
+                        }
+
+                        var iconColor = problem.Severity switch
+                        {
+                            PluginValidator.ValidationSeverity.Fatal => ImGuiColors.DalamudRed,
+                            PluginValidator.ValidationSeverity.Warning => ImGuiColors.DalamudOrange,
+                            PluginValidator.ValidationSeverity.Information => ImGuiColors.TankBlue,
+                            _ => ImGuiColors.DalamudGrey,
+                        };
+
+                        using (ImRaii.PushColor(ImGuiCol.Text, iconColor))
+                        using (ImRaii.PushFont(InterfaceManager.IconFont))
+                        {
+                            switch (problem.Severity)
+                            {
+                                case PluginValidator.ValidationSeverity.Fatal:
+                                    ImGui.Text(FontAwesomeIcon.TimesCircle.ToIconString());
+                                    break;
+                                case PluginValidator.ValidationSeverity.Warning:
+                                    ImGui.Text(FontAwesomeIcon.ExclamationTriangle.ToIconString());
+                                    break;
+                                case PluginValidator.ValidationSeverity.Information:
+                                    ImGui.Text(FontAwesomeIcon.InfoCircle.ToIconString());
+                                    break;
+                                default:
+                                    throw new ArgumentOutOfRangeException();
+                            }
+                        }
+                            
+                        ImGui.SameLine();
+
+                        using (ImRaii.PushColor(ImGuiCol.Text, thisProblemIsDismissed ? ImGuiColors.DalamudGrey : ImGuiColors.DalamudWhite))
+                        {
+                            ImGuiHelpers.SafeTextWrapped(problem.GetLocalizedDescription());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     private void DrawDevPluginButtons(LocalPlugin localPlugin)
     {
         ImGui.SameLine();
@@ -2668,7 +3085,7 @@ internal class PluginInstallerWindow : Window, IDisposable
         if (localPlugin is LocalDevPlugin plugin)
         {
             var isInDefaultProfile =
-                Service<ProfileManager>.Get().IsInDefaultProfile(localPlugin.Manifest.InternalName);
+                Service<ProfileManager>.Get().IsInDefaultProfile(localPlugin.Manifest.WorkingPluginId);
 
             // https://colorswall.com/palette/2868/
             var greenColor = new Vector4(0x5C, 0xB8, 0x5C, 0xFF) / 0xFF;
@@ -2792,12 +3209,16 @@ internal class PluginInstallerWindow : Window, IDisposable
         }
     }
 
-    private void DrawVisitRepoUrlButton(string? repoUrl)
+    private bool DrawVisitRepoUrlButton(string? repoUrl, bool big)
     {
         if (!string.IsNullOrEmpty(repoUrl) && repoUrl.StartsWith("https://"))
         {
             ImGui.SameLine();
-            if (ImGuiComponents.IconButton(FontAwesomeIcon.Globe))
+            
+            var clicked = big ?
+                              ImGuiComponents.IconButtonWithText(FontAwesomeIcon.Globe, "Open website") :
+                              ImGuiComponents.IconButton(FontAwesomeIcon.Globe);
+            if (clicked)
             {
                 try
                 {
@@ -2815,7 +3236,11 @@ internal class PluginInstallerWindow : Window, IDisposable
 
             if (ImGui.IsItemHovered())
                 ImGui.SetTooltip(Locs.PluginButtonToolTip_VisitPluginUrl);
+
+            return true;
         }
+
+        return false;
     }
 
     private bool DrawPluginImages(LocalPlugin? plugin, IPluginManifest manifest, bool isThirdParty, int index)
@@ -3008,7 +3433,7 @@ internal class PluginInstallerWindow : Window, IDisposable
                 this.pluginListAvailable.Sort((p1, p2) => p1.Name.CompareTo(p2.Name));
                 
                 var profman = Service<ProfileManager>.Get();
-                this.pluginListInstalled.Sort((p1, p2) => profman.IsInDefaultProfile(p1.InternalName).CompareTo(profman.IsInDefaultProfile(p2.InternalName)));
+                this.pluginListInstalled.Sort((p1, p2) => profman.IsInDefaultProfile(p1.Manifest.WorkingPluginId).CompareTo(profman.IsInDefaultProfile(p2.Manifest.WorkingPluginId)));
                 break;
             default:
                 throw new InvalidEnumArgumentException("Unknown plugin sort type.");
@@ -3035,15 +3460,27 @@ internal class PluginInstallerWindow : Window, IDisposable
         return this.updateModalTaskCompletionSource.Task;
     }
 
-    private void UpdateCategoriesOnSearchChange()
+    private void UpdateCategoriesOnSearchChange(string? previousSearchText)
     {
         if (string.IsNullOrEmpty(this.searchText))
         {
             this.categoryManager.SetCategoryHighlightsForPlugins(null);
+            
+            // Reset here for good measure, as we're returning from a search
+            this.openPluginCollapsibles.Clear();
         }
         else
         {
-            var pluginsMatchingSearch = this.pluginListAvailable.Where(rm => !this.IsManifestFiltered(rm));
+            var pluginsMatchingSearch = this.pluginListAvailable.Where(rm => !this.IsManifestFiltered(rm)).ToArray();
+            
+            // Check if the search results are different, and clear the open collapsibles if they are
+            if (previousSearchText != null)
+            {
+                var previousSearchResults = this.pluginListAvailable.Where(rm => !this.IsManifestFiltered(rm)).ToArray();
+                if (!previousSearchResults.SequenceEqual(pluginsMatchingSearch))
+                    this.openPluginCollapsibles.Clear();
+            }
+            
             this.categoryManager.SetCategoryHighlightsForPlugins(pluginsMatchingSearch);
         }
     }
@@ -3051,7 +3488,74 @@ internal class PluginInstallerWindow : Window, IDisposable
     private void UpdateCategoriesOnPluginsChange()
     {
         this.categoryManager.BuildCategories(this.pluginListAvailable);
-        this.UpdateCategoriesOnSearchChange();
+        this.UpdateCategoriesOnSearchChange(null);
+    }
+
+    private void DrawFontawesomeIconOutlined(FontAwesomeIcon icon, Vector4 outline, Vector4 iconColor)
+    {
+        var positionOffset = ImGuiHelpers.ScaledVector2(0.0f, 1.0f);
+        var cursorStart = ImGui.GetCursorPos() + positionOffset;
+        ImGui.PushFont(UiBuilder.IconFont);
+
+        ImGui.PushStyleColor(ImGuiCol.Text, outline);
+        foreach (var x in Enumerable.Range(-1, 3))
+        {
+            foreach (var y in Enumerable.Range(-1, 3))
+            {
+                if (x is 0 && y is 0) continue;
+                
+                ImGui.SetCursorPos(cursorStart + new Vector2(x, y));
+                ImGui.Text(icon.ToIconString());
+            }
+        }
+        
+        ImGui.PopStyleColor();
+        
+        ImGui.PushStyleColor(ImGuiCol.Text, iconColor);
+        ImGui.SetCursorPos(cursorStart);
+        ImGui.Text(icon.ToIconString());
+        ImGui.PopStyleColor();
+        
+        ImGui.PopFont();
+        
+        ImGui.SetCursorPos(ImGui.GetCursorPos() - positionOffset);
+    }
+    
+    // Animates a tooltip when hovering over the ImGui Item before this call.
+    private void VerifiedCheckmarkFadeTooltip(string source, string tooltip)
+    {
+        const float fadeInStartDelay = 250.0f;
+        
+        var isHoveringSameItem = this.verifiedCheckmarkHoveredPlugin == source;
+        
+        // If we just started a hover, start the timer
+        if (ImGui.IsItemHovered() && !this.tooltipFadeInStopwatch.IsRunning)
+        {
+            this.verifiedCheckmarkHoveredPlugin = source;
+            this.tooltipFadeInStopwatch.Restart();
+        }
+        
+        // If we were last hovering this plugins item and are no longer hovered over that item, reset the timer
+        if (!ImGui.IsItemHovered() && isHoveringSameItem)
+        {
+            this.verifiedCheckmarkHoveredPlugin = string.Empty;
+            this.tooltipFadeInStopwatch.Stop();
+            this.tooltipFadeEasing.Reset();
+        }
+        
+        // If we have been hovering this item for > fadeInStartDelay milliseconds, fade in tooltip over fadeInTime milliseconds
+        if (ImGui.IsItemHovered() && isHoveringSameItem && this.tooltipFadeInStopwatch.ElapsedMilliseconds >= fadeInStartDelay)
+        {
+            if (!this.tooltipFadeEasing.IsRunning)
+                this.tooltipFadeEasing.Start();
+            
+            this.tooltipFadeEasing.Update();
+            var fadePercent = this.tooltipFadeEasing.EasedPoint.X;
+            ImGui.PushStyleColor(ImGuiCol.Text, ImGui.GetStyle().Colors[(int)ImGuiCol.Text] with { W = fadePercent });
+            ImGui.PushStyleColor(ImGuiCol.FrameBg, ImGui.GetStyle().Colors[(int)ImGuiCol.FrameBg] with { W = fadePercent });
+            ImGui.SetTooltip(tooltip);
+            ImGui.PopStyleColor(2);
+        }
     }
 
     [SuppressMessage("StyleCop.CSharp.OrderingRules", "SA1201:Elements should appear in the correct order", Justification = "Disregard here")]
@@ -3188,7 +3692,11 @@ internal class PluginInstallerWindow : Window, IDisposable
 
         public static string PluginBody_Plugin3rdPartyRepo(string url) => Loc.Localize("InstallerPlugin3rdPartyRepo", "From custom plugin repository {0}").Format(url);
 
-        public static string PluginBody_Outdated => Loc.Localize("InstallerOutdatedPluginBody ", "This plugin is outdated and incompatible at the moment. Please wait for it to be updated by its author.");
+        public static string PluginBody_Outdated => Loc.Localize("InstallerOutdatedPluginBody ", "This plugin is outdated and incompatible.");
+        
+        public static string PluginBody_Outdated_WaitForUpdate => Loc.Localize("InstallerOutdatedWaitForUpdate", "Please wait for it to be updated by its author.");
+        
+        public static string PluginBody_Outdated_CanNowUpdate => Loc.Localize("InstallerOutdatedCanNowUpdate", "An update is available for installation.");
 
         public static string PluginBody_Orphaned => Loc.Localize("InstallerOrphanedPluginBody ", "This plugin's source repository is no longer available. You may need to reinstall it from its repository, or re-add the repository.");
 
@@ -3198,7 +3706,7 @@ internal class PluginInstallerWindow : Window, IDisposable
 
         public static string PluginBody_LoadFailed => Loc.Localize("InstallerLoadFailedPluginBody ", "This plugin failed to load. Please contact the author for more information.");
 
-        public static string PluginBody_Banned => Loc.Localize("InstallerBannedPluginBody ", "This plugin was automatically disabled due to incompatibilities and is not available at the moment. Please wait for it to be updated by its author.");
+        public static string PluginBody_Banned => Loc.Localize("InstallerBannedPluginBody ", "This plugin was automatically disabled due to incompatibilities and is not available.");
 
         public static string PluginBody_Policy => Loc.Localize("InstallerPolicyPluginBody ", "Plugin loads for this type of plugin were manually disabled.");
 
@@ -3220,12 +3728,18 @@ internal class PluginInstallerWindow : Window, IDisposable
         public static string PluginButton_Unload => Loc.Localize("InstallerUnload", "Unload");
 
         public static string PluginButton_SafeMode => Loc.Localize("InstallerSafeModeButton", "Can't change in safe mode");
+        
+        public static string PluginButton_OpenUi => Loc.Localize("InstallerOpenPluginUi", "Open");
+        
+        public static string PluginButton_OpenSettings => Loc.Localize("InstallerOpenPluginSettings", "Settings");
 
         #endregion
 
         #region Plugin button tooltips
+        
+        public static string PluginButtonToolTip_OpenUi => Loc.Localize("InstallerTooltipOpenUi", "Open this plugin's interface");
 
-        public static string PluginButtonToolTip_OpenConfiguration => Loc.Localize("InstallerOpenConfig", "Open Configuration");
+        public static string PluginButtonToolTip_OpenConfiguration => Loc.Localize("InstallerTooltipOpenConfig", "Open this plugin's settings");
 
         public static string PluginButtonToolTip_PickProfiles => Loc.Localize("InstallerPickProfiles", "Pick collections for this plugin");
 
@@ -3252,6 +3766,10 @@ internal class PluginInstallerWindow : Window, IDisposable
         public static string PluginButtonToolTip_UnloadFailed => Loc.Localize("InstallerLoadUnloadFailedTooltip", "Plugin load/unload failed, please restart your game and try again.");
 
         public static string PluginButtonToolTip_NeedsToBeInDefault => Loc.Localize("InstallerUnloadNeedsToBeInDefault", "This plugin is in one or more collections. If you want to enable or disable it, please do so by enabling or disabling the collections it is in.\nIf you want to manage it manually, remove it from all collections.");
+        
+        public static string PluginButtonToolTip_NeedsToBeInSingleProfile => Loc.Localize("InstallerUnloadNeedsToBeInSingleProfile", "This plugin is in more than one collection. If you want to enable or disable it, please do so by enabling or disabling the collections it is in.\nIf you want to manage it here, make sure it is only in a single collection.");
+        
+        public static string PluginButtonToolTip_SingleProfileDisabled(string name) => Loc.Localize("InstallerSingleProfileDisabled", "The collection '{0}' which contains this plugin is disabled.\nPlease enable it in the collections manager to toggle the plugin individually.").Format(name);
 
         #endregion
 
@@ -3325,7 +3843,7 @@ internal class PluginInstallerWindow : Window, IDisposable
 
         public static string ErrorModal_InstallFail(string name) => Loc.Localize("InstallerInstallFail", "Failed to install plugin {0}.\n{1}").Format(name, ErrorModal_InstallContactAuthor);
 
-        public static string ErrorModal_SingleUpdateFail(string name) => Loc.Localize("InstallerSingleUpdateFail", "Failed to update plugin {0}.\n{1}").Format(name, ErrorModal_InstallContactAuthor);
+        public static string ErrorModal_SingleUpdateFail(string name, string why) => Loc.Localize("InstallerSingleUpdateFail", "Failed to update plugin {0} ({1}).\n{2}").Format(name, why, ErrorModal_InstallContactAuthor);
 
         public static string ErrorModal_DeleteConfigFail(string name) => Loc.Localize("InstallerDeleteConfigFail", "Failed to reset the plugin {0}.\n\nThe plugin may not support this action. You can try deleting the configuration manually while the game is shut down - please see the FAQ.").Format(name);
 
@@ -3373,7 +3891,7 @@ internal class PluginInstallerWindow : Window, IDisposable
 
         public static string FeedbackModal_ContactInformationRequired => Loc.Localize("InstallerFeedbackContactInfoRequired", "Contact information has not been provided. We require contact information to respond to questions, or to request additional information to troubleshoot problems.");
 
-        public static string FeedbackModal_ContactInformationDiscordButton => Loc.Localize("ContactInformationDiscordButton", "Join Goat Place Discord");
+        public static string FeedbackModal_ContactInformationDiscordButton => Loc.Localize("ContactInformationDiscordButton", "Join XIVLauncher & Dalamud Discord");
 
         public static string FeedbackModal_ContactInformationDiscordUrl => Loc.Localize("ContactInformationDiscordUrl", "https://goat.place/");
 
@@ -3397,6 +3915,18 @@ internal class PluginInstallerWindow : Window, IDisposable
 
         #endregion
 
+        #region Delete Plugin Config Warning Modal
+
+        public static string DeletePluginConfigWarningModal_Title => Loc.Localize("InstallerDeletePluginConfigWarning", "Warning###InstallerDeletePluginConfigWarning");
+
+        public static string DeletePluginConfigWarningModal_Body(string pluginName) => Loc.Localize("InstallerDeletePluginConfigWarningBody", "Are you sure you want to delete all data and configuration for {0}?").Format(pluginName);
+
+        public static string DeletePluginConfirmWarningModal_Yes => Loc.Localize("InstallerDeletePluginConfigWarningYes", "Yes");
+
+        public static string DeletePluginConfirmWarningModal_No => Loc.Localize("InstallerDeletePluginConfigWarningNo", "No");
+
+        #endregion
+        
         #region Plugin Update chatbox
 
         public static string PluginUpdateHeader_Chatbox => Loc.Localize("DalamudPluginUpdates", "Updates:");
@@ -3427,6 +3957,20 @@ internal class PluginInstallerWindow : Window, IDisposable
 
         public static string Profiles_RemoveFromAll =>
             Loc.Localize("InstallerProfilesRemoveFromAll", "Remove from all collections");
+
+        #endregion
+        
+        #region VerifiedCheckmark
+
+        public static string VerifiedCheckmark_VerifiedTooltip =>
+            Loc.Localize("VerifiedCheckmarkVerifiedTooltip", "This plugin has been reviewed by the Dalamud team.\n" +
+                                                             "It follows our technical and safety criteria, and adheres to our guidelines.");
+
+        public static string VerifiedCheckmark_UnverifiedTooltip =>
+            Loc.Localize("VerifiedCheckmarkUnverifiedTooltip", "This plugin has not been reviewed by the Dalamud team.\n" +
+                                                               "We cannot take any responsibility for custom plugins and repositories.\n" +
+                                                               "Please make absolutely sure that you only install plugins from developers you trust.\n\n" +
+                                                               "You will not receive support for plugins installed from custom repositories on the XIVLauncher & Dalamud server.");
 
         #endregion
     }

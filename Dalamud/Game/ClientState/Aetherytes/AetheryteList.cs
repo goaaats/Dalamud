@@ -14,11 +14,11 @@ namespace Dalamud.Game.ClientState.Aetherytes;
 /// </summary>
 [PluginInterface]
 [InterfaceVersion("1.0")]
-[ServiceManager.BlockingEarlyLoadedService]
+[ServiceManager.EarlyLoadedService]
 #pragma warning disable SA1015
 [ResolveVia<IAetheryteList>]
 #pragma warning restore SA1015
-public sealed unsafe partial class AetheryteList : IServiceType, IAetheryteList
+internal sealed unsafe partial class AetheryteList : IServiceType, IAetheryteList
 {
     [ServiceManager.ServiceDependency]
     private readonly ClientState clientState = Service<ClientState>.Get();
@@ -78,7 +78,7 @@ public sealed unsafe partial class AetheryteList : IServiceType, IAetheryteList
 /// <summary>
 /// This collection represents the list of available Aetherytes in the Teleport window.
 /// </summary>
-public sealed partial class AetheryteList
+internal sealed partial class AetheryteList
 {
     /// <inheritdoc/>
     public int Count => this.Length;

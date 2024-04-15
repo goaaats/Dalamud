@@ -1,8 +1,8 @@
-using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using System.Runtime.Serialization;
 using System.Threading.Tasks;
 
@@ -16,6 +16,7 @@ namespace Dalamud.IoC.Internal;
 /// This is only used to resolve dependencies for plugins.
 /// Dalamud services are constructed via Service{T}.ConstructObject at the moment.
 /// </summary>
+[ServiceManager.ProvidedService]
 internal class ServiceContainer : IServiceProvider, IServiceType
 {
     private static readonly ModuleLog Log = new("SERVICECONTAINER");
@@ -29,6 +30,16 @@ internal class ServiceContainer : IServiceProvider, IServiceType
     public ServiceContainer()
     {
     }
+    
+    /// <summary>
+    /// Gets a dictionary of all registered instances.
+    /// </summary>
+    public IReadOnlyDictionary<Type, ObjectInstance> Instances => this.instances;
+    
+    /// <summary>
+    /// Gets a dictionary mapping interfaces to their implementations.
+    /// </summary>
+    public IReadOnlyDictionary<Type, Type> InterfaceToTypeMap => this.interfaceToTypeMap;
 
     /// <summary>
     /// Register a singleton object of any type into the current IOC container.
@@ -43,7 +54,6 @@ internal class ServiceContainer : IServiceProvider, IServiceType
         }
 
         this.instances[typeof(T)] = new(instance.ContinueWith(x => new WeakReference(x.Result)), typeof(T));
-        this.RegisterInterfaces(typeof(T));
     }
 
     /// <summary>
@@ -59,7 +69,7 @@ internal class ServiceContainer : IServiceProvider, IServiceType
         foreach (var resolvableType in resolveViaTypes)
         {
             Log.Verbose("=> {InterfaceName} provides for {TName}", resolvableType.FullName ?? "???", type.FullName ?? "???");
-
+            
             Debug.Assert(!this.interfaceToTypeMap.ContainsKey(resolvableType), "A service already implements this interface, this is not allowed");
             Debug.Assert(type.IsAssignableTo(resolvableType), "Service does not inherit from indicated ResolveVia type");
 
@@ -123,7 +133,7 @@ internal class ServiceContainer : IServiceProvider, IServiceType
             return null;
         }
 
-        var instance = FormatterServices.GetUninitializedObject(objectType);
+        var instance = RuntimeHelpers.GetUninitializedObject(objectType);
 
         if (!await this.InjectProperties(instance, scopedObjects, scope))
         {
@@ -218,7 +228,7 @@ internal class ServiceContainer : IServiceProvider, IServiceType
         if (this.interfaceToTypeMap.TryGetValue(serviceType, out var implementingType))
             serviceType = implementingType;
         
-        if (serviceType.GetCustomAttribute<ServiceManager.ScopedService>() != null)
+        if (serviceType.GetCustomAttribute<ServiceManager.ScopedServiceAttribute>() != null)
         {
             if (scope == null)
             {
@@ -289,7 +299,7 @@ internal class ServiceContainer : IServiceProvider, IServiceType
             var contains = types.Any(x => x.IsAssignableTo(type));
 
             // Scoped services are created on-demand
-            return contains || type.GetCustomAttribute<ServiceManager.ScopedService>() != null;
+            return contains || type.GetCustomAttribute<ServiceManager.ScopedServiceAttribute>() != null;
         }
         
         var parameters = ctor.GetParameters();

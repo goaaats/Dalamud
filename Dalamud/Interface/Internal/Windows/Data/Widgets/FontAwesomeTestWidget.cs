@@ -1,11 +1,11 @@
-﻿using System;
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
 
+using Dalamud.Interface.Utility;
 using ImGuiNET;
 
-namespace Dalamud.Interface.Internal.Windows.Data;
+namespace Dalamud.Interface.Internal.Windows.Data.Widgets;
 
 /// <summary>
 /// Widget to display FontAwesome Symbols.
@@ -18,9 +18,13 @@ internal class FontAwesomeTestWidget : IDataWindowWidget
     private int selectedIconCategory;
     private string iconSearchInput = string.Empty;
     private bool iconSearchChanged = true;
+    private bool useFixedWidth = false;
     
     /// <inheritdoc/>
-    public DataKind DataKind { get; init; } = DataKind.FontAwesome_Test;
+    public string[]? CommandShortcuts { get; init; } = { "fa", "fatest", "fontawesome" };
+    
+    /// <inheritdoc/>
+    public string DisplayName { get; init; } = "Font Awesome Test"; 
 
     /// <inheritdoc/>
     public bool Ready { get; set; }
@@ -35,12 +39,30 @@ internal class FontAwesomeTestWidget : IDataWindowWidget
     public void Draw()
     {
         ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing, Vector2.Zero);
-        
-        this.iconCategories ??= FontAwesomeHelpers.GetCategories();
+
+        this.iconCategories ??= new[] { "(Show All)", "(Undefined)" }
+                                .Concat(FontAwesomeHelpers.GetCategories().Skip(1))
+                                .ToArray();
 
         if (this.iconSearchChanged)
         {
-            this.icons = FontAwesomeHelpers.SearchIcons(this.iconSearchInput, this.iconCategories[this.selectedIconCategory]);
+            if (this.iconSearchInput == string.Empty && this.selectedIconCategory <= 1)
+            {
+                var en = InterfaceManager.IconFont.GlyphsWrapped()
+                                         .Select(x => (FontAwesomeIcon)x.Codepoint)
+                                         .Where(x => (ushort)x is >= 0xE000 and < 0xF000);
+                en = this.selectedIconCategory == 0
+                         ? en.Concat(FontAwesomeHelpers.SearchIcons(string.Empty, string.Empty))
+                         : en.Except(FontAwesomeHelpers.SearchIcons(string.Empty, string.Empty));
+                this.icons = en.Distinct().Order().ToList();
+            }
+            else
+            {
+                this.icons = FontAwesomeHelpers.SearchIcons(
+                    this.iconSearchInput,
+                    this.selectedIconCategory <= 1 ? string.Empty : this.iconCategories[this.selectedIconCategory]);
+            }
+
             this.iconNames = this.icons.Select(icon => Enum.GetName(icon)!).ToList();
             this.iconSearchChanged = false;
         }
@@ -59,6 +81,8 @@ internal class FontAwesomeTestWidget : IDataWindowWidget
         {
             this.iconSearchChanged = true;
         }
+        
+        ImGui.Checkbox("Use fixed width font", ref this.useFixedWidth);
 
         ImGuiHelpers.ScaledDummy(10f);
         for (var i = 0; i < this.icons?.Count; i++)
@@ -67,7 +91,7 @@ internal class FontAwesomeTestWidget : IDataWindowWidget
             ImGuiHelpers.ScaledRelativeSameLine(50f);
             ImGui.Text($"{this.iconNames?[i]}");
             ImGuiHelpers.ScaledRelativeSameLine(280f);
-            ImGui.PushFont(UiBuilder.IconFont);
+            ImGui.PushFont(this.useFixedWidth ? InterfaceManager.IconFontFixedWidth : InterfaceManager.IconFont);
             ImGui.Text(this.icons[i].ToIconString());
             ImGui.PopFont();
             ImGuiHelpers.ScaledDummy(2f);

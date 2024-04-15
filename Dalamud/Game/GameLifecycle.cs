@@ -11,11 +11,11 @@ namespace Dalamud.Game;
 /// </summary>
 [PluginInterface]
 [InterfaceVersion("1.0")]
-[ServiceManager.BlockingEarlyLoadedService]
+[ServiceManager.EarlyLoadedService]
 #pragma warning disable SA1015
 [ResolveVia<IGameLifecycle>]
 #pragma warning restore SA1015
-public class GameLifecycle : IServiceType, IGameLifecycle
+internal class GameLifecycle : IServiceType, IGameLifecycle
 {
     private readonly CancellationTokenSource dalamudUnloadCts = new();
     private readonly CancellationTokenSource gameShutdownCts = new();

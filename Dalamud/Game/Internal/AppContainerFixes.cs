@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Text;
 
+using Dalamud.Common;
 using Dalamud.Hooking;
 using FFXIVClientStructs.FFXIV.Client.System.String;
 using Serilog;
@@ -11,7 +12,7 @@ namespace Dalamud.Game.Internal;
 /// <summary>
 /// Class containing fixes for app container compatibility.
 /// </summary>
-[ServiceManager.BlockingEarlyLoadedService]
+[ServiceManager.BlockingEarlyLoadedService("Necessary for early AppContainer compatibility fixes.")]
 internal sealed class AppContainerFix : IServiceType
 {
     private readonly Hook<TryGetMyDocumentsPath> pathHook;

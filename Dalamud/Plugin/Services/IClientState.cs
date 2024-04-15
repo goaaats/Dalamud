@@ -12,17 +12,17 @@ public interface IClientState
     /// <summary>
     /// Event that gets fired when the current Territory changes.
     /// </summary>
-    public event EventHandler<ushort> TerritoryChanged;
+    public event Action<ushort> TerritoryChanged;
 
     /// <summary>
     /// Event that fires when a character is logging in, and the local character object is available.
     /// </summary>
-    public event EventHandler Login;
+    public event Action Login;
 
     /// <summary>
     /// Event that fires when a character is logging out.
     /// </summary>
-    public event EventHandler Logout;
+    public event Action Logout;
 
     /// <summary>
     /// Event that fires when a character is entering PvP.
@@ -37,7 +37,7 @@ public interface IClientState
     /// <summary>
     /// Event that gets fired when a duty is ready.
     /// </summary>
-    public event EventHandler<Lumina.Excel.GeneratedSheets.ContentFinderCondition> CfPop;
+    public event Action<Lumina.Excel.GeneratedSheets.ContentFinderCondition> CfPop;
 
     /// <summary>
     /// Gets the language of the client.
@@ -48,6 +48,11 @@ public interface IClientState
     /// Gets the current Territory the player resides in.
     /// </summary>
     public ushort TerritoryType { get; }
+    
+    /// <summary>
+    /// Gets the current Map the player resides in.
+    /// </summary>
+    public uint MapId { get; }
 
     /// <summary>
     /// Gets the local player character, if one is present.
@@ -73,4 +78,9 @@ public interface IClientState
     /// Gets a value indicating whether or not the user is playing PvP, excluding the Wolves' Den.
     /// </summary>
     public bool IsPvPExcludingDen { get; }
+    
+    /// <summary>
+    /// Gets a value indicating whether the client is currently in Group Pose (GPose) mode. 
+    /// </summary>
+    public bool IsGPosing { get; }
 }

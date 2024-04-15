@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Project>
     <PropertyGroup>
-        <TargetFramework>net7.0-windows</TargetFramework>
+        <TargetFramework>net8.0-windows</TargetFramework>
         <Platforms>x64</Platforms>
         <Nullable>enable</Nullable>
         <LangVersion>latest</LangVersion>
@@ -14,11 +14,10 @@
     </PropertyGroup>
 
     <ItemGroup>
-        <PackageReference Include="DalamudPackager" Version="2.1.11" />
+        <PackageReference Include="DalamudPackager" Version="2.1.12" />
         <Reference Include="FFXIVClientStructs" Private="false" />
         <Reference Include="Newtonsoft.Json" Private="false" />
         <Reference Include="Dalamud" Private="false" />
-        <Reference Include="Dalamud.Interface" Private="false" />
         <Reference Include="ImGui.NET" Private="false" />
         <Reference Include="ImGuiScene" Private="false" />
         <Reference Include="Lumina" Private="false" />

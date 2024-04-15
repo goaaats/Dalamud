@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Project Sdk="Microsoft.NET.Sdk">
     <PropertyGroup Label="Target">
-        <TargetFramework>net7.0</TargetFramework>
+        <TargetFramework>net8.0</TargetFramework>
         <RuntimeIdentifier>win-x64</RuntimeIdentifier>
         <PlatformTarget>x64</PlatformTarget>
         <Platforms>x64;AnyCPU</Platforms>
-        <LangVersion>10.0</LangVersion>
+        <LangVersion>latest</LangVersion>
     </PropertyGroup>
 
     <PropertyGroup Label="Feature">
@@ -83,12 +83,6 @@
     </ItemGroup>
 
     <ItemGroup>
-        <!-- This prevents us from having to include Dalamud itself as a dependency -->
-        <!-- If the files move just update the paths here -->
-        <Compile Include="..\Dalamud\ClientLanguage.cs" Link="Included\%(Filename)%(Extension)" />
-        <Compile Include="..\Dalamud\IServiceType.cs" Link="Included\%(Filename)%(Extension)" />
-        <Compile Include="..\Dalamud\DalamudStartInfo.cs" Link="Included\%(Filename)%(Extension)" />
-        <Compile Include="..\Dalamud\Game\GameVersion.cs" Link="Included\Game\%(Filename)%(Extension)" />
-        <Compile Include="..\Dalamud\Game\GameVersionConverter.cs" Link="Included\Game\%(Filename)%(Extension)" />
+      <ProjectReference Include="..\Dalamud.Common\Dalamud.Common.csproj" />
     </ItemGroup>
 </Project>
