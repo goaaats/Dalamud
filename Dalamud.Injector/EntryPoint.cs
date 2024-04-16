@@ -6,6 +6,7 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Security.AccessControl;
 using System.Text;
 
 using Dalamud.Common;
@@ -923,32 +924,32 @@ namespace Dalamud.Injector
             Directory.CreateDirectory(xlPatchesDirectory);
 
             // TODO: this can be owned by administrator(as Xl.Patcher runs as admin) in which case this can fail
-            config.Grant(workingDir, true, false, true);
+            config.Grant(workingDir, FileSystemRights.ReadAndExecute, IsolationConfig.IntegrityLevel.Unchanged);
 
-            config.Grant(gameConfigDirectory, true, true, false);
-            config.Deny(Path.Combine(gameConfigDirectory, "downloads"), true, false, false);
+            config.Grant(gameConfigDirectory, FileSystemRights.Read | FileSystemRights.Write | FileSystemRights.ExecuteFile, IsolationConfig.IntegrityLevel.Low);
+            config.Deny(Path.Combine(gameConfigDirectory, "downloads"), FileSystemRights.Write, IsolationConfig.IntegrityLevel.Medium);
 
             // TODO: must either revoke write access to $xl/addon, $xl/patches and $xl/runtime or change directory structure to support appcontainer
-            config.Grant(xlDirectory, true, true, true);
-            config.Deny(xlAddonDirectory, true, false, false);
-            config.Deny(xlRuntimeDirectory, true, false, false);
-            config.Deny(xlPatchesDirectory, true, false, false);
+            config.Grant(xlDirectory, FileSystemRights.Read | FileSystemRights.Write | FileSystemRights.ExecuteFile, IsolationConfig.IntegrityLevel.Low);
+            config.Deny(xlAddonDirectory, FileSystemRights.Write, IsolationConfig.IntegrityLevel.Medium);
+            config.Deny(xlRuntimeDirectory,  FileSystemRights.Write, IsolationConfig.IntegrityLevel.Medium);
+            config.Deny(xlPatchesDirectory,  FileSystemRights.Write, IsolationConfig.IntegrityLevel.Medium);
 
             if (!string.IsNullOrEmpty(binaryDir))
             {
-                config.Grant(binaryDir, true, false, true);
+                config.Grant(binaryDir, FileSystemRights.ReadAndExecute, IsolationConfig.IntegrityLevel.Unchanged);
             }
 
             // Grant known log paths(after binary directory, because they might be in there)
             // TODO: This is confusing, LogPath should not be a folder
             var logPathWithFile = Path.Combine(startInfo.LogPath!, "dalamud.log");
             if (File.Exists(logPathWithFile))
-                config.Grant(logPathWithFile, true, true, false);
+                config.Grant(logPathWithFile, FileSystemRights.Read | FileSystemRights.Write, IsolationConfig.IntegrityLevel.Unchanged);
             if (File.Exists(startInfo.BootLogPath))
-                config.Grant(startInfo.BootLogPath, true, true, false);
+                config.Grant(startInfo.BootLogPath, FileSystemRights.Read | FileSystemRights.Write, IsolationConfig.IntegrityLevel.Unchanged);
 
             if (File.Exists(configPath))
-                config.Deny(configPath, true, true, true);
+                config.Deny(configPath, FileSystemRights.Read | FileSystemRights.Write, IsolationConfig.IntegrityLevel.Unchanged);
 
             return config;
         }

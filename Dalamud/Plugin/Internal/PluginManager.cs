@@ -1151,32 +1151,23 @@ internal partial class PluginManager : IInternalDisposableService
         // Testing exclusive
         if (manifest.IsTestingExclusive && !this.configuration.DoPluginTest)
         {
-            Log.Verbose($"Testing exclusivity: {manifest.InternalName} - {manifest.AssemblyVersion} - {manifest.TestingAssemblyVersion}");
             return false;
         }
 
         // Applicable version
         if (manifest.ApplicableVersion < this.dalamud.StartInfo.GameVersion)
         {
-            Log.Verbose($"Game version: {manifest.InternalName} - {manifest.AssemblyVersion} - {manifest.TestingAssemblyVersion}");
             return false;
         }
 
         // API level - we keep the API before this in the installer to show as "outdated"
         if (manifest.DalamudApiLevel < DalamudApiLevel - 1 && !this.LoadAllApiLevels)
         {
-            Log.Verbose($"API Level: {manifest.InternalName} - {manifest.AssemblyVersion} - {manifest.TestingAssemblyVersion}");
             return false;
         }
 
         // Banned
-        if (this.IsManifestBanned(manifest))
-        {
-            Log.Verbose($"Banned: {manifest.InternalName} - {manifest.AssemblyVersion} - {manifest.TestingAssemblyVersion}");
-            return false;
-        }
-
-        return true;
+        return !this.IsManifestBanned(manifest);
     }
 
     /// <summary>

@@ -107,8 +107,7 @@ internal class DalamudInterface : IInternalDisposableService
         Game.Framework framework,
         ClientState clientState,
         TitleScreenMenu titleScreenMenu,
-        GameGui gameGui,
-        DalamudStartInfo startInfo)
+        GameGui gameGui)
     {
         this.dalamud = dalamud;
         this.configuration = configuration;
@@ -193,7 +192,7 @@ internal class DalamudInterface : IInternalDisposableService
         this.creditsDarkeningAnimation.Point1 = Vector2.Zero;
         this.creditsDarkeningAnimation.Point2 = new Vector2(CreditsDarkeningMaxAlpha);
         
-        this.SetupDisclaimers(startInfo);
+        //this.SetupDisclaimers(startInfo);
     }
     
     private delegate nint CrashDebugDelegate(nint self);

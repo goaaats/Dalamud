@@ -1,4 +1,5 @@
 ﻿using System.Collections.Generic;
+using System.Security.AccessControl;
 
 namespace Dalamud.Injector.Isolation;
 
@@ -15,12 +16,19 @@ public class IsolationConfig
         /// <summary>
         /// Access should be granted.
         /// </summary>
-        Grant,
+        Allow,
 
         /// <summary>
         /// Access should be denied.
         /// </summary>
         Deny,
+    }
+
+    public enum IntegrityLevel
+    {
+        Unchanged,
+        Low,
+        Medium
     }
 
     /// <summary>
@@ -39,11 +47,11 @@ public class IsolationConfig
     /// </summary>
     public List<PathPermissionEntry> Paths { get; set; } = new();
 
-    public void Grant(string path, bool r, bool w, bool x)
-        => this.Paths.Add(new PathPermissionEntry(PathMode.Grant, path, r, w, x));
+    public void Grant(string path, FileSystemRights rights, IntegrityLevel integrityLevel)
+        => this.Paths.Add(new PathPermissionEntry(PathMode.Allow, path, rights, integrityLevel));
 
-    public void Deny(string path, bool r, bool w, bool x)
-        => this.Paths.Add(new PathPermissionEntry(PathMode.Deny, path, r, w, x));
+    public void Deny(string path, FileSystemRights rights, IntegrityLevel integrityLevel)
+        => this.Paths.Add(new PathPermissionEntry(PathMode.Deny, path, rights, integrityLevel));
 
-    public record PathPermissionEntry(PathMode Mode, string Path, bool Read, bool Write, bool Execute);
+    public record PathPermissionEntry(PathMode Mode, string Path, FileSystemRights Rights, IntegrityLevel IntegrityLevel);
 }

@@ -1,12 +1,12 @@
 ﻿using System;
 using System.Diagnostics;
 using System.Runtime.Versioning;
+using System.Security.Principal;
+
 using Windows.Win32;
 using Windows.Win32.Foundation;
 using Windows.Win32.Security;
 using Windows.Win32.Security.Authorization;
-using Windows.Win32.Storage.FileSystem;
-
 namespace Dalamud.Injector.Container;
 
 internal sealed class AppContainer : IDisposable
@@ -125,7 +125,16 @@ internal sealed class AppContainer : IDisposable
             }
         }
     }
+    
+    public SecurityIdentifier ToIdentityReference()
+    {
+        unsafe
+        {
+            return new SecurityIdentifier((IntPtr)this.Sid.Value);
+        }
+    }
 
+    /*
     [SupportedOSPlatform("windows5.1.2600")]
     public void GrantFileAccess(string path, FILE_ACCESS_RIGHTS accessMask)
     {
@@ -137,4 +146,5 @@ internal sealed class AppContainer : IDisposable
     {
         this.AddNamedObjectDacl(SE_OBJECT_TYPE.SE_FILE_OBJECT, path, ACCESS_MODE.DENY_ACCESS, (uint)accessMask);
     }
+    */
 }

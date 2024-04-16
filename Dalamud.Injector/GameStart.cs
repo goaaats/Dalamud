@@ -4,6 +4,8 @@ using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Security.AccessControl;
+using System.Security.Principal;
 using System.Threading;
 
 using Dalamud.Injector.Container;
@@ -11,7 +13,6 @@ using Dalamud.Injector.Isolation;
 using Dalamud.Injector.Win32;
 using Serilog;
 using Windows.Win32.Security;
-using Windows.Win32.Storage.FileSystem;
 using Windows.Win32.System.Threading;
 
 // ReSharper disable InconsistentNaming
@@ -506,29 +507,62 @@ namespace Dalamud.Injector
 
             PInvoke.CloseHandle(tokenHandle);
         }
+        
+        public static bool IsAdministrator =>
+            new WindowsPrincipal(WindowsIdentity.GetCurrent())
+                .IsInRole(WindowsBuiltInRole.Administrator);
 
         private static AppContainer CreateAppContainer(GameStartContext context)
         {
             var appContainer = new AppContainer("Dalamud.Container", "Dalamud", "A container for sandboxing dalamud plugins");
+            var containerSecRef = appContainer.ToIdentityReference();
 
-            foreach (var pathEntry in context.IsolationConfig!.Paths)
+            if (IsAdministrator)
             {
-                var accessFlags = (FILE_ACCESS_RIGHTS)0;
+                foreach (var pathEntry in context.IsolationConfig!.Paths)
+                {
+                    Log.Information("Changing DACL: {Path} {Mode} {Access}", pathEntry.Path, pathEntry.Mode, pathEntry.Rights);
 
-                if (pathEntry.Read)
-                    accessFlags |= FILE_ACCESS_RIGHTS.FILE_GENERIC_READ;
-                if (pathEntry.Write)
-                    accessFlags |= FILE_ACCESS_RIGHTS.FILE_GENERIC_WRITE | FILE_ACCESS_RIGHTS.DELETE;
-                if (pathEntry.Execute)
-                    accessFlags |= FILE_ACCESS_RIGHTS.FILE_GENERIC_EXECUTE;
+                    if (Directory.Exists(pathEntry.Path))
+                    {
+                        FileSystemAclHelper.AddDirectoryAce(
+                            pathEntry.Path,
+                            containerSecRef,
+                            pathEntry.Rights,
+                            InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit,
+                            pathEntry.Mode == IsolationConfig.PathMode.Allow ? AccessControlType.Allow : AccessControlType.Deny);
+                    }
+                    else if (File.Exists(pathEntry.Path))
+                    {
+                        /*
+                        FileSystemAclHelper.AddFileAce(
+                            pathEntry.Path,
+                            containerSecRef,
+                            pathEntry.Rights,
+                            InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit,
+                            pathEntry.Mode == IsolationConfig.PathMode.Allow ? AccessControlType.Allow : AccessControlType.Deny);
+                            */
+                    }
+                    else
+                    {
+                        throw new InvalidOperationException($"Path does not exist: {pathEntry.Path}");
+                    }
 
-                if (pathEntry.Mode == IsolationConfig.PathMode.Grant)
-                    appContainer.GrantFileAccess(pathEntry.Path, accessFlags);
-                else if (pathEntry.Mode == IsolationConfig.PathMode.Deny)
-                    appContainer.DenyFileAccess(pathEntry.Path, accessFlags);
+                    // Update IL
+                    if (pathEntry.IntegrityLevel != IsolationConfig.IntegrityLevel.Unchanged)
+                    {
+                        Log.Information(@"Changing the integrity level for ""{Path}"" to {WellKnownSid}", pathEntry.Path, pathEntry.IntegrityLevel);
+                        FileSystemAclHelper.SetIntegrityLevel(
+                            pathEntry.Path,
+                            pathEntry.IntegrityLevel == IsolationConfig.IntegrityLevel.Low ? WELL_KNOWN_SID_TYPE.WinLowLabelSid : WELL_KNOWN_SID_TYPE.WinMediumLabelSid,
+                            ACE_FLAGS.OBJECT_INHERIT_ACE | ACE_FLAGS.CONTAINER_INHERIT_ACE
+                        );
+                    }
+                }
 
-                Log.Information("Isolation: {Path} {Mode} {Access}", pathEntry.Path, pathEntry.Mode, accessFlags);
+                return null;
             }
+            
 
             if (context.IsolationConfig.AllowLocalNetwork)
                 throw new NotImplementedException();

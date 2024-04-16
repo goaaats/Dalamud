@@ -1,7 +1,6 @@
-﻿using System;
+﻿using System.IO;
 using System.Text;
 
-using Dalamud.Common;
 using Dalamud.Hooking;
 using FFXIVClientStructs.FFXIV.Client.System.String;
 using Serilog;
@@ -19,10 +18,10 @@ internal sealed class AppContainerFix : IServiceType
     private readonly Hook<SHGetKnownFolderPathPrototype> getKnownFolderPathHook;
 
     [ServiceManager.ServiceConstructor]
-    private unsafe AppContainerFix(DalamudStartInfo startInfo, SigScanner sigScanner)
+    private unsafe AppContainerFix(TargetSigScanner sigScanner)
     {
         // These fixes are not "security features" but are compatibility kludges to make sandboxing FFXIV work.
-        if (startInfo.UseAppContainer)
+        if (/*startInfo.UseAppContainer*/true)
         {
             var pGetMyDocuments = sigScanner.ScanText("4889?????? 57 4881EC??????00 488B05???????? 4833C4 48898424???????? 488BF9 32DB");
             this.pathHook = Hook<TryGetMyDocumentsPath>.FromAddress(pGetMyDocuments, this.FixTryGetMyDocumentsPath);
@@ -32,6 +31,7 @@ internal sealed class AppContainerFix : IServiceType
             this.getKnownFolderPathHook.Enable();
 
             Log.Debug("AppContainer Fix Test1: {Path}", Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments));
+            Log.Debug("{Text}", File.ReadAllText("C:\\Users\\user\\Documents\\My Games\\FINAL FANTASY XIV - A Realm Reborn\\FFXIV.cfg"));
         }
     }
 
