@@ -737,6 +737,11 @@ internal class DalamudInterface : IInternalDisposableService
                         Process.GetCurrentProcess().Kill();
                     }
 
+                    if (ImGui.MenuItem("Open notepad"))
+                    {
+                        Process.Start("notepad.exe");
+                    }
+                        
                     ImGui.Separator();
                     
                     if (ImGui.BeginMenu("Crash game"))
