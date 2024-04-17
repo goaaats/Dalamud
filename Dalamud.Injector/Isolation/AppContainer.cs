@@ -1,4 +1,5 @@
 ﻿using System;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Runtime.Versioning;
 using System.Security.Principal;
@@ -7,6 +8,9 @@ using Windows.Win32;
 using Windows.Win32.Foundation;
 using Windows.Win32.Security;
 using Windows.Win32.Security.Authorization;
+
+using Serilog;
+
 namespace Dalamud.Injector.Container;
 
 internal sealed class AppContainer : IDisposable
@@ -20,11 +24,36 @@ internal sealed class AppContainer : IDisposable
     {
         HRESULT hresult;
 
+        Span<SID_AND_ATTRIBUTES> capabilities = Span<SID_AND_ATTRIBUTES>.Empty;
+
+        unsafe
+        {
+            PSID* capabilityGroupSids;
+            uint capabilityGroupSidCount = 0;
+            PSID* capabilitySids;
+            uint capabilitySidCount = 0;
+            if (!PInvoke.DeriveCapabilitySidsFromName("ID_CAP_INTERNET_CLIENT", out capabilityGroupSids, out capabilityGroupSidCount, out capabilitySids, out capabilitySidCount))
+            {
+                throw new Win32Exception("Failed to derive capability sid");
+            }
+
+            capabilities = new SID_AND_ATTRIBUTES[capabilitySidCount];
+
+            for (var i = 0; i < capabilitySidCount; i++)
+            {
+                capabilities[i].Sid = capabilitySids[i];
+                capabilities[i].Attributes = PInvoke.SE_GROUP_ENABLED;
+            }
+        }
+
+        Log.Information("Have {NumCaps} capabilities", capabilities.Length);
+
+        //PInvoke.DeleteAppContainerProfile(containerName);
         hresult = PInvoke.CreateAppContainerProfile(
             containerName,
             displayName ?? containerName,
             description ?? containerName,
-            Span<SID_AND_ATTRIBUTES>.Empty,
+            capabilities,
             out this.sid);
 
         if (hresult.Succeeded)
