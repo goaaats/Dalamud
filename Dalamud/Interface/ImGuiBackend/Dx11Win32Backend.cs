@@ -1,4 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
+using System.Threading;
 
 using Dalamud.Bindings.ImGui;
 using Dalamud.Bindings.ImGuizmo;
@@ -26,10 +27,14 @@ internal sealed unsafe class Dx11Win32Backend : IWin32Backend
     private readonly Dx11Renderer imguiRenderer;
     private readonly Win32InputHandler imguiInput;
 
+    private readonly Lock stepLock = new();
+
     private ComPtr<IDXGISwapChain> swapChainPossiblyWrapped;
     private ComPtr<IDXGISwapChain> swapChain;
     private ComPtr<ID3D11Device> device;
     private ComPtr<ID3D11DeviceContext> deviceContext;
+
+    private ImDrawData drawData;
 
     private int targetWidth;
     private int targetHeight;
@@ -152,12 +157,16 @@ internal sealed unsafe class Dx11Win32Backend : IWin32Backend
         this.imguiInput.ProcessWndProcW(hWnd, msg, wParam, lParam);
 
     /// <inheritdoc/>
-    public void Render()
+    public void Step()
     {
-        this.imguiRenderer.OnNewFrame();
-        this.NewRenderFrame?.Invoke();
+        using var l = this.stepLock.EnterScope();
+
         this.imguiInput.NewFrame(this.targetWidth, this.targetHeight);
         this.NewInputFrame?.Invoke();
+
+        // This needs to be here because fonts
+        this.imguiRenderer.OnNewFrame();
+        this.NewRenderFrame?.Invoke();
 
         ImGui.NewFrame();
         ImGuizmo.BeginFrame();
@@ -165,10 +174,22 @@ internal sealed unsafe class Dx11Win32Backend : IWin32Backend
         this.BuildUi?.Invoke();
 
         ImGui.Render();
-
-        this.imguiRenderer.RenderDrawData(ImGui.GetDrawData());
-
         ImGui.UpdatePlatformWindows();
+
+        this.drawData = *ImGui.GetDrawData().Handle;
+    }
+
+    /// <inheritdoc/>
+    public void Render()
+    {
+        // FIXME: We need this lock to make sure device objects are not being recreated in Step() while rendering.
+        // This function can be called asynchronously and out of order with Step().
+        // We should double buffer device objects instead or draw to a render target that we can compose here instead of the backbuffer.
+        using var l = this.stepLock.EnterScope();
+
+        fixed (ImDrawData* pDrawData = &this.drawData)
+            this.imguiRenderer.RenderDrawData(new ImDrawDataPtr(pDrawData));
+
         ImGui.RenderPlatformWindowsDefault();
     }
 

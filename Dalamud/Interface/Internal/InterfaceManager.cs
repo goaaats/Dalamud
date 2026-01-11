@@ -105,6 +105,8 @@ internal partial class InterfaceManager : IInternalDisposableService
 
     private IWin32Backend? backend;
 
+    private bool hooksInitialized;
+
     private Hook<SetCursorDelegate>? setCursorHook;
     private Hook<ReShadeDxgiSwapChainPresentDelegate>? reShadeDxgiSwapChainPresentHook;
     private Hook<DxgiSwapChainPresentDelegate>? dxgiSwapChainPresentHook;
@@ -308,6 +310,8 @@ internal partial class InterfaceManager : IInternalDisposableService
     void IInternalDisposableService.DisposeService()
     {
         this.assertHandler.Dispose();
+
+        this.framework.Update -= this.FrameworkOnUpdate;
 
         // Unload hooks from the framework thread if possible.
         // We're currently off the framework thread, as this function can only be called from
@@ -573,17 +577,30 @@ internal partial class InterfaceManager : IInternalDisposableService
 
     private unsafe void FrameworkOnUpdate(IFramework framework1)
     {
-        // We now delay hooking until Framework is set up and has fired its first update.
-        // Some graphics drivers seem to consider the game's shader cache as invalid if we hook too early.
-        // The game loads shader packages on the file thread and then compiles them. It will show the logo once it is done.
-        // This is a workaround, but it fixes an issue where the game would take a very long time to get to the title screen.
-        // NetworkModuleProxy is set up after lua scripts are loaded (EventFramework.LoadState >= 5), which can only happen
-        // after the shaders are compiled (if necessary) and loaded. AgentLobby.Update doesn't do much until this condition is met.
-        if (CSFramework.Instance()->GetNetworkModuleProxy() == null)
+        if (!this.hooksInitialized)
+        {
+            // We now delay hooking until Framework is set up and has fired its first update.
+            // Some graphics drivers seem to consider the game's shader cache as invalid if we hook too early.
+            // The game loads shader packages on the file thread and then compiles them. It will show the logo once it is done.
+            // This is a workaround, but it fixes an issue where the game would take a very long time to get to the title screen.
+            // NetworkModuleProxy is set up after lua scripts are loaded (EventFramework.LoadState >= 5), which can only happen
+            // after the shaders are compiled (if necessary) and loaded. AgentLobby.Update doesn't do much until this condition is met.
+            if (CSFramework.Instance()->GetNetworkModuleProxy() == null)
+                return;
+
+            this.SetupHooks(Service<TargetSigScanner>.Get(), Service<FontAtlasFactory>.Get());
+            this.hooksInitialized = true;
+        }
+
+        if (this.backend is null || !this.dalamudAtlas!.HasBuiltAtlas)
             return;
 
-        this.SetupHooks(Service<TargetSigScanner>.Get(), Service<FontAtlasFactory>.Get());
-        this.framework.Update -= this.FrameworkOnUpdate;
+        ThreadSafety.MarkRenderThread();
+
+        // Process information needed by ImGuiHelpers each frame.
+        ImGuiHelpers.NewFrame();
+
+        this.backend.Step();
     }
 
     /// <summary>Checks if the provided swap chain is the target that Dalamud should draw its interface onto,
@@ -634,14 +651,11 @@ internal partial class InterfaceManager : IInternalDisposableService
         while (this.runBeforeImGuiRender.TryDequeue(out var action))
             action.InvokeSafely();
 
-        // Process information needed by ImGuiHelpers each frame.
-        ImGuiHelpers.NewFrame();
-
         // Enable viewports if there are no issues.
-        var viewportsEnable = this.dalamudConfiguration.IsDisableViewport ||
+        var viewportsDisabled = this.dalamudConfiguration.IsDisableViewport ||
                               activeBackend.IsMainViewportFullScreen() ||
                               ImGui.GetPlatformIO().Monitors.Size == 1;
-        if (viewportsEnable)
+        if (viewportsDisabled)
             ImGui.GetIO().ConfigFlags &= ~ImGuiConfigFlags.ViewportsEnable;
         else
             ImGui.GetIO().ConfigFlags |= ImGuiConfigFlags.ViewportsEnable;

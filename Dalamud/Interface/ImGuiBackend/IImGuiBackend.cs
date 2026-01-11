@@ -32,6 +32,9 @@ internal interface IImGuiBackend : IDisposable
     /// <summary>Gets the renderer.</summary>
     IImGuiRenderer Renderer { get; }
 
+    /// <summary> Step ImGui once, invoke draw events. </summary>
+    void Step();
+
     /// <summary>Performs a render cycle.</summary>
     void Render();
 
