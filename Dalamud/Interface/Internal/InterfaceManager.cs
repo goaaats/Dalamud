@@ -951,6 +951,15 @@ internal partial class InterfaceManager : IInternalDisposableService
         }
 
         Log.Information("===== S W A P C H A I N =====");
+
+        // Unwrap NvPresent if needed.
+        // Some NVIDIA drivers wrap the game's swap chain with their own implementation to inject
+        // driver-level optimizations. This breaks our ability to hook the swap chain methods.
+        // Specifically, when smooth motion is enabled, present is called multiple times per game frame to
+        // interpolate frames. Without this, their calls do not reach our hook causing flickering.
+        if (SwapChainHelper.UnwrapNvPresent())
+            Log.Information("Unwrapped NvPresent");
+
         var sb = new StringBuilder();
         foreach (var m in ReShadeAddonInterface.AllReShadeModules)
         {
@@ -978,8 +987,8 @@ internal partial class InterfaceManager : IInternalDisposableService
         switch (this.dalamudConfiguration.ReShadeHandlingMode)
         {
             // If ReShade is not found, do no special handling.
-            //case var _ when ReShadeAddonInterface.ReShadeModule is null:
-            //    goto default;
+            case var _ when ReShadeAddonInterface.ReShadeModule is null:
+                goto default;
 
             // This is the only mode honored when SwapChainHookMode is set to VTable.
             case ReShadeHandlingMode.Default:

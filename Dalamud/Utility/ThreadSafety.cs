@@ -19,6 +19,9 @@ public static class ThreadSafety
     /// </summary>
     public static bool IsMainThread => threadStaticIsMainThread;
 
+    /// <summary>
+    /// Gets a value indicating whether the current thread is allowed to be used for rendering.
+    /// </summary>
     public static bool IsRenderThread => threadStaticIsMainThread || threadStaticIsRenderThread;
 
     /// <summary>
@@ -58,7 +61,7 @@ public static class ThreadSafety
     }
 
     /// <summary>
-    /// Throws an exception when the current thread is not the main thread.
+    /// Throws an exception when the current thread is not a render thread.
     /// </summary>
     /// <param name="message">The message to be passed into the exception, if one is to be thrown.</param>
     /// <exception cref="InvalidOperationException">Thrown when the current thread is not the main thread.</exception>
@@ -72,7 +75,7 @@ public static class ThreadSafety
     }
 
     /// <summary>
-    /// Throws an exception when the current thread is the main thread.
+    /// Throws an exception when the current thread is a render thread.
     /// </summary>
     /// <exception cref="InvalidOperationException">Thrown when the current thread is the main thread.</exception>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -84,7 +87,7 @@ public static class ThreadSafety
         }
     }
 
-    /// <summary><see cref="AssertMainThread"/>, but only on debug compilation mode.</summary>
+    /// <summary><see cref="AssertRenderThread"/>, but only on debug compilation mode.</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static void DebugAssertRenderThread()
     {
@@ -101,6 +104,9 @@ public static class ThreadSafety
         threadStaticIsMainThread = true;
     }
 
+    /// <summary>
+    /// Marks a thread as a render thread.
+    /// </summary>
     internal static void MarkRenderThread()
     {
         threadStaticIsRenderThread = true;

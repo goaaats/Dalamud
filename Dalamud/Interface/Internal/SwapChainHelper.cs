@@ -1,6 +1,7 @@
 using System.Threading;
 
 using Dalamud.Interface.Internal.ReShadeHandling;
+using Dalamud.Interface.Internal.Unwrapper;
 
 using FFXIVClientStructs.FFXIV.Client.Graphics.Kernel;
 
@@ -107,7 +108,24 @@ internal static unsafe class SwapChainHelper
     public static bool UnwrapReShade()
     {
         using var swapChain = new ComPtr<IDXGISwapChain>(GameDeviceSwapChain);
-        if (!ComHookUnwrapper.Unwrap(&swapChain))
+        var reshadeUnwrapper = new ReShadeUnwrapper();
+        if (!reshadeUnwrapper.Unwrap(&swapChain))
+            return false;
+
+        foundGameDeviceSwapChain = swapChain.Get();
+        return true;
+    }
+
+    /// <summary>
+    /// Make <see cref="GameDeviceSwapChain"/> store address of unwrapped swap chain, if it was wrapped by NvPresent.
+    /// This can happen when some NVIDIA features are enabled, like Smooth Motion (frame generation).
+    /// </summary>
+    /// <returns><c>true</c> if it was wrapped with ReShade.</returns>
+    public static bool UnwrapNvPresent()
+    {
+        using var swapChain = new ComPtr<IDXGISwapChain>(GameDeviceSwapChain);
+        var reshadeUnwrapper = new NvPresentUnwrapper();
+        if (!reshadeUnwrapper.Unwrap(&swapChain))
             return false;
 
         foundGameDeviceSwapChain = swapChain.Get();
