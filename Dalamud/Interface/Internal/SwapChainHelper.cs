@@ -85,7 +85,7 @@ internal static unsafe class SwapChainHelper
         DXGI_SWAP_CHAIN_DESC desc1;
         if (punk->GetDesc(&desc1).FAILED)
             return false;
-        
+
         DXGI_SWAP_CHAIN_DESC desc2;
         if (GameDeviceSwapChain->GetDesc(&desc2).FAILED)
             return false;
@@ -107,7 +107,7 @@ internal static unsafe class SwapChainHelper
     public static bool UnwrapReShade()
     {
         using var swapChain = new ComPtr<IDXGISwapChain>(GameDeviceSwapChain);
-        if (!ReShadeUnwrapper.Unwrap(&swapChain))
+        if (!ComHookUnwrapper.Unwrap(&swapChain))
             return false;
 
         foundGameDeviceSwapChain = swapChain.Get();

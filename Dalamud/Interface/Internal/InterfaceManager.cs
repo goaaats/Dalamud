@@ -626,6 +626,8 @@ internal partial class InterfaceManager : IInternalDisposableService
     /// <param name="activeBackend">The scene to draw to.</param>
     private void RenderDalamudDraw(IImGuiBackend activeBackend)
     {
+        ThreadSafety.MarkRenderThread();
+
         this.CumulativePresentCalls++;
         this.IsMainThreadInPresent = true;
 
@@ -976,8 +978,8 @@ internal partial class InterfaceManager : IInternalDisposableService
         switch (this.dalamudConfiguration.ReShadeHandlingMode)
         {
             // If ReShade is not found, do no special handling.
-            case var _ when ReShadeAddonInterface.ReShadeModule is null:
-                goto default;
+            //case var _ when ReShadeAddonInterface.ReShadeModule is null:
+            //    goto default;
 
             // This is the only mode honored when SwapChainHookMode is set to VTable.
             case ReShadeHandlingMode.Default:

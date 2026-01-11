@@ -8,8 +8,8 @@ using static TerraFX.Interop.Windows.Windows;
 
 namespace Dalamud.Interface.Internal.ReShadeHandling;
 
-/// <summary>Unwraps IUnknown wrapped by ReShade.</summary>
-internal static unsafe class ReShadeUnwrapper
+/// <summary>Unwraps IUnknown wrapped by other graphics injector.</summary>
+internal static unsafe class ComHookUnwrapper
 {
     /// <summary>Unwraps <typeparamref name="T"/> if it is wrapped by ReShade.</summary>
     /// <param name="comptr">[inout] The COM pointer to an instance of <typeparamref name="T"/>.</param>
@@ -74,6 +74,21 @@ internal static unsafe class ReShadeUnwrapper
         return changed;
     }
 
+    private static bool BelongsInNvPresentDll(nint ptr)
+    {
+        foreach (ProcessModule processModule in Process.GetCurrentProcess().Modules)
+        {
+            if (ptr < processModule.BaseAddress ||
+                ptr >= processModule.BaseAddress + processModule.ModuleMemorySize ||
+                !processModule.ModuleName.Contains("NvPresent", StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            return true;
+        }
+
+        return false;
+    }
+
     private static bool BelongsInReShadeDll(nint ptr)
     {
         foreach (ProcessModule processModule in Process.GetCurrentProcess().Modules)
@@ -115,7 +130,7 @@ internal static unsafe class ReShadeUnwrapper
                 var pfn = Marshal.ReadIntPtr((nint)(vtbl + i));
                 if (!IsValidExecutableMemoryAddress(pfn, 1))
                     return false;
-                if (!BelongsInReShadeDll(pfn))
+                if (!BelongsInReShadeDll(pfn) && !BelongsInNvPresentDll(pfn))
                     return false;
             }
 

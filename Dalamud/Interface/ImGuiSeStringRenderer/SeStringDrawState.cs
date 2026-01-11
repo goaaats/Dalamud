@@ -47,10 +47,10 @@ public unsafe ref struct SeStringDrawState : IDisposable
 
         if (ssdp.TargetDrawList is null)
         {
-            if (!ThreadSafety.IsMainThread)
+            if (!ThreadSafety.IsRenderThread)
             {
                 throw new ArgumentException(
-                    $"{nameof(ssdp.TargetDrawList)} must be set to render outside the main thread.");
+                    $"{nameof(ssdp.TargetDrawList)} must be set to render outside the render thread.");
             }
 
             this.drawList = ssdp.TargetDrawList ?? ImGui.GetWindowDrawList();

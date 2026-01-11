@@ -184,7 +184,7 @@ internal abstract class SharedImmediateTexture
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool TryGetWrap([NotNullWhen(true)] out IDalamudTextureWrap? texture, out Exception? exception)
     {
-        ThreadSafety.AssertMainThread();
+        ThreadSafety.AssertRenderThread();
         return this.TryGetWrapCore(out texture, out exception);
     }
 
