@@ -70,7 +70,7 @@ public static class ThreadSafety
     {
         if (!threadStaticIsRenderThread)
         {
-            throw new InvalidOperationException(message ?? "Not on main thread!");
+            throw new InvalidOperationException(message ?? "Not on render thread!");
         }
     }
 
@@ -83,7 +83,7 @@ public static class ThreadSafety
     {
         if (threadStaticIsRenderThread)
         {
-            throw new InvalidOperationException("On main thread!");
+            throw new InvalidOperationException("On render thread!");
         }
     }
 

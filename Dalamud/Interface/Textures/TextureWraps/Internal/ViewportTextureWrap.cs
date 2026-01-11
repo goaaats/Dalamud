@@ -81,7 +81,7 @@ internal sealed class ViewportTextureWrap : IDalamudTextureWrap, IDeferredDispos
 
         try
         {
-            ThreadSafety.AssertMainThread();
+            ThreadSafety.AssertRenderThread();
 
             using var backBuffer = GetImGuiViewportBackBuffer(this.args.ViewportId);
             D3D11_TEXTURE2D_DESC newDesc;
@@ -220,7 +220,7 @@ internal sealed class ViewportTextureWrap : IDalamudTextureWrap, IDeferredDispos
 
     private static unsafe ComPtr<ID3D11Texture2D> GetImGuiViewportBackBuffer(uint viewportId)
     {
-        ThreadSafety.AssertMainThread();
+        ThreadSafety.AssertRenderThread();
         var viewports = ImGui.GetPlatformIO().Viewports;
         var viewportIndex = 0;
         for (; viewportIndex < viewports.Size; viewportIndex++)

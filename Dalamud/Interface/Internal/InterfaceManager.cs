@@ -959,6 +959,8 @@ internal partial class InterfaceManager : IInternalDisposableService
         // interpolate frames. Without this, their calls do not reach our hook causing flickering.
         if (SwapChainHelper.UnwrapNvPresent())
             Log.Information("Unwrapped NvPresent");
+        else
+            Log.Information("No NvPresent wrap detected");
 
         var sb = new StringBuilder();
         foreach (var m in ReShadeAddonInterface.AllReShadeModules)

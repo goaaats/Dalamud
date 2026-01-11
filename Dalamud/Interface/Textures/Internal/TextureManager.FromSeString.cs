@@ -17,7 +17,7 @@ internal sealed partial class TextureManager
         scoped in SeStringDrawParams drawParams = default,
         string? debugName = null)
     {
-        ThreadSafety.AssertMainThread();
+        ThreadSafety.AssertRenderThread();
         using var dd = this.seStringRenderer.CreateDrawData(text, drawParams);
         var texture = this.CreateDrawListTexture(debugName ?? nameof(this.CreateTextureFromSeString));
         try
