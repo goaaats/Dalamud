@@ -74,7 +74,7 @@ internal sealed unsafe partial class DrawListTextureWrap
         /// <param name="drawData">Pointer to the draw data.</param>
         public void RenderDrawData(ID3D11RenderTargetView* prtv, ImDrawDataPtr drawData)
         {
-            ThreadSafety.AssertRenderThread();
+            ThreadSafety.AssertMainThread();
 
             if (drawData.DisplaySize.X <= 0 || drawData.DisplaySize.Y <= 0
                 || !drawData.Valid || drawData.CmdListsCount < 1)
@@ -262,7 +262,7 @@ internal sealed unsafe partial class DrawListTextureWrap
         /// <param name="prtv">The pointer to a Texture2D RTV to write straightened data.</param>
         public void MakeStraight(ID3D11ShaderResourceView* psrv, ID3D11RenderTargetView* prtv)
         {
-            ThreadSafety.AssertRenderThread();
+            ThreadSafety.AssertMainThread();
 
             D3D11_TEXTURE2D_DESC texDesc;
             using (var texRes = default(ComPtr<ID3D11Resource>))

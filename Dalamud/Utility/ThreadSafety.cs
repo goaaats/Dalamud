@@ -11,18 +11,10 @@ public static class ThreadSafety
     [ThreadStatic]
     private static bool threadStaticIsMainThread;
 
-    [ThreadStatic]
-    private static bool threadStaticIsRenderThread;
-
     /// <summary>
     /// Gets a value indicating whether the current thread is the main thread.
     /// </summary>
     public static bool IsMainThread => threadStaticIsMainThread;
-
-    /// <summary>
-    /// Gets a value indicating whether the current thread is allowed to be used for rendering.
-    /// </summary>
-    public static bool IsRenderThread => threadStaticIsMainThread || threadStaticIsRenderThread;
 
     /// <summary>
     /// Throws an exception when the current thread is not the main thread.
@@ -61,54 +53,10 @@ public static class ThreadSafety
     }
 
     /// <summary>
-    /// Throws an exception when the current thread is not a render thread.
-    /// </summary>
-    /// <param name="message">The message to be passed into the exception, if one is to be thrown.</param>
-    /// <exception cref="InvalidOperationException">Thrown when the current thread is not the main thread.</exception>
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static void AssertRenderThread(string? message = null)
-    {
-        if (!threadStaticIsRenderThread)
-        {
-            throw new InvalidOperationException(message ?? "Not on render thread!");
-        }
-    }
-
-    /// <summary>
-    /// Throws an exception when the current thread is a render thread.
-    /// </summary>
-    /// <exception cref="InvalidOperationException">Thrown when the current thread is the main thread.</exception>
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static void AssertNotRenderThread()
-    {
-        if (threadStaticIsRenderThread)
-        {
-            throw new InvalidOperationException("On render thread!");
-        }
-    }
-
-    /// <summary><see cref="AssertRenderThread"/>, but only on debug compilation mode.</summary>
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static void DebugAssertRenderThread()
-    {
-#if DEBUG
-        AssertRenderThread();
-#endif
-    }
-
-    /// <summary>
     /// Marks a thread as the main thread.
     /// </summary>
     internal static void MarkMainThread()
     {
         threadStaticIsMainThread = true;
-    }
-
-    /// <summary>
-    /// Marks a thread as a render thread.
-    /// </summary>
-    internal static void MarkRenderThread()
-    {
-        threadStaticIsRenderThread = true;
     }
 }

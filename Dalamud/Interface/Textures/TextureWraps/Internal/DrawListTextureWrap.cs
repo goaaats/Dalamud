@@ -176,7 +176,7 @@ internal sealed unsafe partial class DrawListTextureWrap : IDrawListTextureWrap,
     /// <inheritdoc/>
     public void Draw(ImDrawDataPtr drawData)
     {
-        ThreadSafety.AssertRenderThread();
+        ThreadSafety.AssertMainThread();
 
         // Do nothing if the render target is empty.
         if (this.rtv.IsEmpty())

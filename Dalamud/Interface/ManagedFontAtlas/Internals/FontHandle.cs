@@ -104,7 +104,7 @@ internal abstract class FontHandle : IFontHandle
         if (this.TryLock(out _) is not { } locked)
             return default;
 
-        if (!ThreadSafety.IsRenderThread && nextNonMainThreadFontAccessWarningCheck < Environment.TickCount64)
+        if (!ThreadSafety.IsMainThread && nextNonMainThreadFontAccessWarningCheck < Environment.TickCount64)
         {
             nextNonMainThreadFontAccessWarningCheck =
                 Environment.TickCount64 + NonMainThreadFontAccessWarningCheckInterval;
@@ -203,7 +203,7 @@ internal abstract class FontHandle : IFontHandle
     /// <inheritdoc/>
     public IDisposable Push()
     {
-        ThreadSafety.AssertRenderThread();
+        ThreadSafety.AssertMainThread();
 
         // Warn if the client is not properly managing the pushed font stack.
         var cumulativePresentCalls = Service<InterfaceManager>.Get().CumulativePresentCalls;
@@ -234,7 +234,7 @@ internal abstract class FontHandle : IFontHandle
     /// <inheritdoc/>
     public void Pop()
     {
-        ThreadSafety.AssertRenderThread();
+        ThreadSafety.AssertMainThread();
         this.pushedFonts[^1].Dispose();
     }
 

@@ -595,8 +595,6 @@ internal partial class InterfaceManager : IInternalDisposableService
         if (this.backend is null || !this.dalamudAtlas!.HasBuiltAtlas)
             return;
 
-        ThreadSafety.MarkRenderThread();
-
         // Process information needed by ImGuiHelpers each frame.
         ImGuiHelpers.NewFrame();
 
@@ -643,8 +641,6 @@ internal partial class InterfaceManager : IInternalDisposableService
     /// <param name="activeBackend">The scene to draw to.</param>
     private void RenderDalamudDraw(IImGuiBackend activeBackend)
     {
-        ThreadSafety.MarkRenderThread();
-
         this.CumulativePresentCalls++;
         this.IsMainThreadInPresent = true;
 

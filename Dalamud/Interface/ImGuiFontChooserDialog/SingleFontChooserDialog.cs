@@ -269,7 +269,7 @@ public sealed class SingleFontChooserDialog : IDisposable
     /// <returns>The default popup size.</returns>
     public static Vector2 GetDefaultPopupSizeNonClamped()
     {
-        ThreadSafety.AssertRenderThread();
+        ThreadSafety.AssertMainThread();
         return new Vector2(40, 30) * ImGui.GetTextLineHeight();
     }
 
@@ -295,7 +295,7 @@ public sealed class SingleFontChooserDialog : IDisposable
     /// <param name="preferredPopupSize">The preferred popup size.</param>
     public void SetPopupPositionAndSizeToCurrentWindowCenter(Vector2 preferredPopupSize)
     {
-        ThreadSafety.AssertRenderThread();
+        ThreadSafety.AssertMainThread();
         this.PopupSize = preferredPopupSize;
         this.PopupPosition = ImGui.GetWindowPos() + ((ImGui.GetWindowSize() - preferredPopupSize) / 2);
     }

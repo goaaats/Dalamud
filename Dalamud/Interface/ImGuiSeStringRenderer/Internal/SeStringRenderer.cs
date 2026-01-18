@@ -23,6 +23,8 @@ using Lumina.Text.Parse;
 using Lumina.Text.Payloads;
 using Lumina.Text.ReadOnly;
 
+using Serilog;
+
 using static Dalamud.Game.Text.SeStringHandling.BitmapFontIcon;
 
 namespace Dalamud.Interface.ImGuiSeStringRenderer.Internal;
@@ -154,7 +156,7 @@ internal class SeStringRenderer : IServiceType
     {
         // Interactivity is supported only from the main thread.
         if (!imGuiId.IsEmpty())
-            ThreadSafety.AssertRenderThread();
+            ThreadSafety.AssertMainThread();
 
         if (drawParams.TargetDrawList is not null && imGuiId)
             throw new ArgumentException("ImGuiId cannot be set if TargetDrawList is manually set.", nameof(imGuiId));
@@ -165,7 +167,7 @@ internal class SeStringRenderer : IServiceType
         if (drawParams.Font.HasValue)
             font = drawParams.Font.Value;
 
-        if (ThreadSafety.IsRenderThread && drawParams.TargetDrawList is null && font is null)
+        if (ThreadSafety.IsMainThread && drawParams.TargetDrawList is null && font is null)
             font = ImGui.GetFont();
         if (font is null)
             throw new ArgumentException("Specified font is empty.");
@@ -175,8 +177,8 @@ internal class SeStringRenderer : IServiceType
         using var stateStorage = new SeStringDrawState(
             sss,
             drawParams,
-            ThreadSafety.IsRenderThread ? this.colorStackSetMainThread : new(this.colorStackSetMainThread.ColorTypes),
-            ThreadSafety.IsRenderThread ? this.fragmentsMainThread : [],
+            ThreadSafety.IsMainThread ? this.colorStackSetMainThread : new(this.colorStackSetMainThread.ColorTypes),
+            ThreadSafety.IsMainThread ? this.fragmentsMainThread : [],
             font);
         ref var state = ref Unsafe.AsRef(in stateStorage);
 

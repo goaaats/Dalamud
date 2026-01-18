@@ -47,7 +47,7 @@ public unsafe ref struct SeStringDrawState : IDisposable
 
         if (ssdp.TargetDrawList is null)
         {
-            if (!ThreadSafety.IsRenderThread)
+            if (!ThreadSafety.IsMainThread)
             {
                 throw new ArgumentException(
                     $"{nameof(ssdp.TargetDrawList)} must be set to render outside the render thread.");
