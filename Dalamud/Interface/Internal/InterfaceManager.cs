@@ -110,10 +110,12 @@ internal partial class InterfaceManager : IInternalDisposableService
 
     private readonly ConcurrentQueue<Action> runBeforeImGuiRender = new();
     private readonly ConcurrentQueue<Action> runAfterImGuiRender = new();
+    private readonly object renderDalamudLock = new();
 
     private readonly AssertHandler assertHandler = new();
 
     private IWin32Backend? backend;
+    private bool isSmoothMotionDetected;
 
     private Hook<SetCursorDelegate>? setCursorHook;
     private Hook<ReShadeDxgiSwapChainPresentDelegate>? reShadeDxgiSwapChainPresentHook;
@@ -688,26 +690,37 @@ internal partial class InterfaceManager : IInternalDisposableService
     /// <param name="activeBackend">The scene to draw to.</param>
     private void RenderDalamudDraw(IImGuiBackend activeBackend)
     {
-        this.CumulativePresentCalls++;
-        this.IsAnyThreadInPresent = true;
+        // Smooth Motion can invoke Present from multiple threads. The queued pre/post actions may touch the
+        // immediate context and ImGui state too, so serialize the complete render transaction rather than only
+        // the backend draw submission.
+        lock (this.renderDalamudLock)
+        {
+            this.CumulativePresentCalls++;
+            this.IsAnyThreadInPresent = true;
 
-        this.PreImGuiRender();
+            try
+            {
+                this.PreImGuiRender();
 
-        // Enable viewports if there are no issues.
-        var viewportsDisabled = this.dalamudConfiguration.IsDisableViewport ||
-                              activeBackend.IsMainViewportFullScreen() ||
-                              ImGui.GetPlatformIO().Monitors.Size == 1;
-        if (viewportsDisabled)
-            ImGui.GetIO().ConfigFlags &= ~ImGuiConfigFlags.ViewportsEnable;
-        else
-            ImGui.GetIO().ConfigFlags |= ImGuiConfigFlags.ViewportsEnable;
+                // Enable viewports if there are no issues.
+                var viewportsDisabled = this.dalamudConfiguration.IsDisableViewport ||
+                                      activeBackend.IsMainViewportFullScreen() ||
+                                      ImGui.GetPlatformIO().Monitors.Size == 1;
+                if (viewportsDisabled)
+                    ImGui.GetIO().ConfigFlags &= ~ImGuiConfigFlags.ViewportsEnable;
+                else
+                    ImGui.GetIO().ConfigFlags |= ImGuiConfigFlags.ViewportsEnable;
 
-        // Call drawing functions, which in turn will call Draw event.
-        activeBackend.Render();
+                // Call drawing functions, which in turn will call Draw event.
+                activeBackend.Render();
 
-        this.PostImGuiRender();
-
-        this.IsAnyThreadInPresent = false;
+                this.PostImGuiRender();
+            }
+            finally
+            {
+                this.IsAnyThreadInPresent = false;
+            }
+        }
     }
 
     private unsafe IImGuiBackend InitBackend(IDXGISwapChain* swapChain)
@@ -717,7 +730,7 @@ internal partial class InterfaceManager : IInternalDisposableService
         {
             try
             {
-                newBackend = new Dx11Win32Backend(swapChain);
+                newBackend = new Dx11Win32Backend(swapChain, this.isSmoothMotionDetected);
                 this.assertHandler.Setup();
             }
             catch (DllNotFoundException ex)
@@ -912,6 +925,20 @@ internal partial class InterfaceManager : IInternalDisposableService
             this.frameRetireActions.Add(action);
     }
 
+    /// <summary>Retires everything that was sized for the current swap chain, in preparation for a resize.</summary>
+    /// <remarks>Must be called while the backend's resize write lock is held (i.e. between
+    /// <see cref="IImGuiBackend.EnterResize"/> and <see cref="IImGuiBackend.ExitResize"/>), so that no render
+    /// pass is active. This mirrors the <see cref="PostImGuiCopy"/> drain so anything sized for the old swap
+    /// chain is released before the back buffers are reallocated.</remarks>
+    private void RetireResourcesForResize()
+    {
+        foreach (var action in this.frameRetireActions)
+            action.InvokeSafely();
+        this.frameRetireActions.Clear();
+        while (this.pendingRetireQueue.TryDequeue(out var action))
+            action.InvokeSafely();
+    }
+
     private unsafe void SetupHooks(
         TargetSigScanner sigScanner,
         FontAtlasFactory fontAtlasFactory)
@@ -1044,15 +1071,6 @@ internal partial class InterfaceManager : IInternalDisposableService
 
         Log.Information("===== S W A P C H A I N =====");
 
-        // Unwrap NvPresent if needed.
-        // Some NVIDIA drivers wrap the game's swap chain with their own implementation to inject driver-level optimizations.
-        // This breaks our ability to hook the swap chain methods, so we need to unwrap it.
-        // We want to render on top of the interpolated frames (because it's easier and prevents artifacts).
-        if (SwapChainHelper.UnwrapNvPresent())
-        {
-            Log.Information("Unwrapped NvPresent, using Smooth Motion");
-        }
-
         var sb = new StringBuilder();
         foreach (var m in ReShadeAddonInterface.AllReShadeModules)
         {
@@ -1096,10 +1114,33 @@ internal partial class InterfaceManager : IInternalDisposableService
             // This is the only mode honored when SwapChainHookMode is set to VTable.
             case ReShadeHandlingMode.Default:
             case ReShadeHandlingMode.UnwrapReShade:
-                if (SwapChainHelper.UnwrapReShade())
-                    Log.Information("Unwrapped ReShade");
-                else
+                var unwrappedReShade = false;
+                var unwrappedNvPresent = false;
+                bool changed;
+                do
+                {
+                    changed = false;
+                    if (SwapChainHelper.UnwrapReShade())
+                    {
+                        unwrappedReShade = true;
+                        changed = true;
+                        Log.Information("Unwrapped ReShade");
+                    }
+
+                    if (SwapChainHelper.UnwrapNvPresent())
+                    {
+                        this.isSmoothMotionDetected = true;
+                        unwrappedNvPresent = true;
+                        changed = true;
+                        Log.Information("Unwrapped NvPresent");
+                    }
+                }
+                while (changed);
+
+                if (!unwrappedReShade)
                     Log.Warning("Could not unwrap ReShade");
+                if (unwrappedNvPresent)
+                    Log.Information("Using Smooth Motion");
                 goto default;
 
             // Do no special ReShade handling.
@@ -1107,6 +1148,12 @@ internal partial class InterfaceManager : IInternalDisposableService
             case ReShadeHandlingMode.None:
             case var _ when this.dalamudConfiguration.SwapChainHookMode == SwapChainHelper.HookMode.VTable:
             default:
+                if (SwapChainHelper.UnwrapNvPresent())
+                {
+                    this.isSmoothMotionDetected = true;
+                    Log.Information("Unwrapped NvPresent, using Smooth Motion");
+                }
+
                 dxgiSwapChainResizeBuffersDelegate = this.AsHookDxgiSwapChainResizeBuffersDetour;
                 dxgiSwapChainPresentDelegate = this.DxgiSwapChainPresentDetour;
                 break;
