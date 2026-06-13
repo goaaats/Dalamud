@@ -167,6 +167,26 @@ internal unsafe partial class Dx11Renderer : IImGuiRenderer
     public void RenderDrawData(ImDrawDataPtr drawData) =>
         this.mainViewport.Draw(drawData, this.mainViewport.SwapChain == null);
 
+    /// <inheritdoc/>
+    public void RenderViewport(nint rendererUserData, ImDrawDataPtr drawData)
+    {
+        if (rendererUserData == nint.Zero)
+            return;
+
+        ViewportData vp;
+        try
+        {
+            vp = ViewportData.Attach((void*)rendererUserData);
+        }
+        catch (InvalidOperationException)
+        {
+            return;
+        }
+
+        vp.Draw(drawData, true);
+        vp.PresentIfSwapChainAvailable();
+    }
+
     /// <summary>
     /// Rebuilds font texture.
     /// </summary>

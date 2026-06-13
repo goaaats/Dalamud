@@ -35,7 +35,7 @@ internal sealed unsafe class Dx11Win32Backend : IWin32Backend
     // Otherwise, we would be updating ImGui multiple times per game-tick which causes large problems with plugin (and our own) code,
     // which relies on executing in-step with the game tick.
     private readonly ReaderWriterLockSlim drawDataLock = new(LockRecursionPolicy.NoRecursion);
-    private readonly DrawDataSnapshot snapshot = new();
+    private readonly ViewportSnapshot viewportSnapshots = new();
 
     private ComPtr<IDXGISwapChain> swapChainPossiblyWrapped;
     private ComPtr<IDXGISwapChain> swapChain;
@@ -183,13 +183,34 @@ internal sealed unsafe class Dx11Win32Backend : IWin32Backend
         this.BuildUi?.Invoke();
 
         ImGui.Render();
-        ImGui.UpdatePlatformWindows();
 
         // Snapshot the draw data under the write lock and signal that we want to render our viewports
         this.drawDataLock.EnterWriteLock();
         try
         {
-            this.snapshot.CopyFrom(ImGui.GetDrawData().Handle);
+            ImGui.UpdatePlatformWindows();
+
+            // Capture a stable, owned copy of EVERY viewport's draw data so the pacer thread never has to walk the
+            // live ImGui platform-IO viewport list (which the next Step() mutates). Entry 0 is the main viewport.
+            this.viewportSnapshots.Reset();
+            this.viewportSnapshots.Capture(ImGui.GetDrawData().Handle, nint.Zero, isMainViewport: true);
+
+            var viewports = ImGui.GetPlatformIO().Viewports;
+            for (var i = 1; i < viewports.Size; i++)
+            {
+                var viewport = viewports[i];
+
+                // Skip viewports we don't own a renderer-side handle for (not yet created / being torn down).
+                var rendererUserData = (nint)viewport.RendererUserData;
+                if (rendererUserData == nint.Zero)
+                    continue;
+
+                // Skip minimized viewports
+                if (viewport.Flags.HasFlag(ImGuiViewportFlags.Minimized))
+                    continue;
+
+                this.viewportSnapshots.Capture(viewport.DrawData.Handle, rendererUserData, isMainViewport: false);
+            }
 
             // PostCopy fires while the write lock is held (guaranteeing no render pass is active with the resources from the previous frame),
             // giving InterfaceManager a chance to retire the previous frame's resources
@@ -212,12 +233,18 @@ internal sealed unsafe class Dx11Win32Backend : IWin32Backend
         this.drawDataLock.EnterReadLock();
         try
         {
-            this.imguiRenderer.RenderDrawData(new ImDrawDataPtr(this.snapshot.Handle));
+            this.imguiRenderer.RenderDrawData(new ImDrawDataPtr(this.viewportSnapshots[0].DrawData.Handle));
 
-            // TODO: This is probably not entirely safe, we might need to batch the things we do in response to
-            // UpdatePlatformWindows() and do them here instead
             if (Interlocked.CompareExchange(ref this.platformWindowsRenderedForStep, 1, 0) == 0)
-                ImGui.RenderPlatformWindowsDefault();
+            {
+                for (var i = 1; i < this.viewportSnapshots.Count; i++)
+                {
+                    var entry = this.viewportSnapshots[i];
+                    this.imguiRenderer.RenderViewport(
+                        entry.RendererUserData,
+                        new ImDrawDataPtr(entry.DrawData.Handle));
+                }
+            }
         }
         finally
         {
@@ -288,7 +315,7 @@ internal sealed unsafe class Dx11Win32Backend : IWin32Backend
         this.imguiRenderer.Dispose();
         this.imguiInput.Dispose();
 
-        this.snapshot.Dispose();
+        this.viewportSnapshots.Dispose();
 
         ImPlot.DestroyContext();
         ImGui.DestroyContext();
